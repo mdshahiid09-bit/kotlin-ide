@@ -61,16 +61,113 @@ jobs:
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
-          KEYSTORE_DIR="${{ runner.temp }}/keystore"
-          mkdir -p "$KEYSTORE_DIR"
-          echo "$KEYSTORE_BASE64" | tr -d '\r\n ' | base64 --decode > "$KEYSTORE_DIR/release.jks" || echo "$KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_DIR/release.jks"
-          chmod 600 "$KEYSTORE_DIR/release.jks"
-          if [ ! -s "$KEYSTORE_DIR/release.jks" ]; then
-            echo "Error: Keystore file is empty after decoding!"
-            exit 1
-          fi
-          echo "KEYSTORE_FILE=$KEYSTORE_DIR/release.jks" >> $GITHUB_ENV
-          ls -lh "$KEYSTORE_DIR/release.jks" | awk '{print "Keystore file created with size: " $5}'
+          python3 - << 'EOF'
+          import os, base64, sys
+
+          raw = os.environ.get("KEYSTORE_BASE64", "")
+          clean_b64 = "".join(raw.split())
+          if not clean_b64:
+              print("ERROR: KEYSTORE_BASE64 is empty after stripping whitespace")
+              sys.exit(1)
+
+          runner_temp = os.environ.get("RUNNER_TEMP", "/tmp")
+          ks_dir = os.path.join(runner_temp, "keystore")
+          os.makedirs(ks_dir, exist_ok=True)
+          ks_file = os.path.join(ks_dir, "release.jks")
+
+          try:
+              data = base64.b64decode(clean_b64)
+          except Exception as e:
+              print(f"ERROR: Base64 decode failed: {e}")
+              sys.exit(1)
+
+          if len(data) == 0:
+              print("ERROR: Decoded keystore data is 0 bytes")
+              sys.exit(1)
+
+          with open(ks_file, "wb") as f:
+              f.write(data)
+
+          os.chmod(ks_file, 0o600)
+          print(f"Decoded keystore successfully: {len(data)} bytes written to {ks_file}")
+
+          with open(os.environ["GITHUB_ENV"], "a") as f:
+              f.write(f"KEYSTORE_FILE={ks_file}\n")
+          EOF
+
+      - name: Verify and Diagnose Keystore Credentials
+        if: env.HAS_KEYSTORE == 'true'
+        env:
+          KEYSTORE_FILE: ${{ env.KEYSTORE_FILE }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          python3 - << 'EOF'
+          import os, subprocess, sys
+
+          ks_file = os.environ.get("KEYSTORE_FILE", "").strip()
+          ks_pass = os.environ.get("KEYSTORE_PASSWORD", "").strip()
+          k_alias = os.environ.get("KEY_ALIAS", "").strip()
+          k_pass = os.environ.get("KEY_PASSWORD", "").strip()
+
+          print(f"Target alias: '{k_alias}'")
+
+          # 1. Test listing with store password
+          p = subprocess.run(
+              ["keytool", "-list", "-keystore", ks_file, "-storepass", ks_pass],
+              capture_output=True, text=True
+          )
+          if p.returncode == 0:
+              print("SUCCESS: Store password verified! Entries found:")
+              aliases_found = []
+              for line in p.stdout.splitlines():
+                  if "PrivateKeyEntry" in line or "trustedCertEntry" in line or "," in line:
+                      print(f"  -> {line.strip()}")
+                      parts = line.split(",")
+                      if parts:
+                          aliases_found.append(parts[0].strip())
+          else:
+              print(f"FAILURE: Store password rejected: {p.stderr.strip()}")
+              sys.exit(1)
+
+          # Find exact alias match or case-insensitive match
+          matched_alias = k_alias
+          if k_alias not in aliases_found:
+              for a in aliases_found:
+                  if a.lower() == k_alias.lower():
+                      print(f"NOTICE: Found case-insensitive alias match: '{a}'")
+                      matched_alias = a
+                      break
+
+          with open(os.environ["GITHUB_ENV"], "a") as f:
+              f.write(f"RESOLVED_KEY_ALIAS={matched_alias}\n")
+
+          # 2. Test reading key entry with key password
+          passwords_to_test = [k_pass]
+          if ks_pass != k_pass:
+              passwords_to_test.append(ks_pass)
+
+          key_valid = False
+          for test_pw in passwords_to_test:
+              p2 = subprocess.run(
+                  ["keytool", "-certreq", "-keystore", ks_file, "-alias", matched_alias, "-storepass", ks_pass, "-keypass", test_pw],
+                  capture_output=True, text=True
+              )
+              if p2.returncode == 0:
+                  print("SUCCESS: Private key is accessible with tested password!")
+                  key_valid = True
+                  with open(os.environ["GITHUB_ENV"], "a") as f:
+                      f.write(f"RESOLVED_KEY_PASSWORD={test_pw}\n")
+                  break
+              else:
+                  print(f"Notice: key access failed with a tested password ({p2.stderr.strip()})")
+
+          if not key_valid:
+              print("WARNING: 'keytool -certreq' test failed, but proceeding to let AGP attempt signing.")
+              with open(os.environ["GITHUB_ENV"], "a") as f:
+                  f.write(f"RESOLVED_KEY_PASSWORD={k_pass}\n")
+          EOF
 
       - name: Build Debug APK
         id: build_debug
@@ -84,8 +181,8 @@ jobs:
         env:
           KEYSTORE_FILE: ${{ env.KEYSTORE_FILE }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEY_ALIAS: ${{ env.RESOLVED_KEY_ALIAS || secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ env.RESOLVED_KEY_PASSWORD || secrets.KEY_PASSWORD }}
         run: |
           set -o pipefail
           ./gradlew assembleRelease --no-daemon --stacktrace 2>&1 | tee build_release_log.txt

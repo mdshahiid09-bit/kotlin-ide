@@ -22,10 +22,10 @@ android {
         }
     }
 
-    val ksFile = System.getenv("KEYSTORE_FILE")
-    val ksPass = System.getenv("KEYSTORE_PASSWORD")
-    val kAlias = System.getenv("KEY_ALIAS")
-    val kPass = System.getenv("KEY_PASSWORD")
+    val ksFile = System.getenv("KEYSTORE_FILE")?.trim()
+    val ksPass = System.getenv("KEYSTORE_PASSWORD")?.trim()
+    val kAlias = (System.getenv("RESOLVED_KEY_ALIAS") ?: System.getenv("KEY_ALIAS"))?.trim()
+    val kPass = (System.getenv("RESOLVED_KEY_PASSWORD") ?: System.getenv("KEY_PASSWORD") ?: ksPass)?.trim()
 
     val hasReleaseSigning = !ksFile.isNullOrBlank() &&
             file(ksFile).exists() &&
