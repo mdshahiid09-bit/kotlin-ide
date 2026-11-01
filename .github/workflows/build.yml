@@ -202,11 +202,19 @@ jobs:
         run: |
           LOG_FILE="failure_log.txt"
           echo "=== Build Failure Diagnostic ===" > "$LOG_FILE"
-          for f in keystore_decode.log keystore_doctor.log build_release_log.txt build_debug_log.txt; do
+          for f in build_debug_log.txt build_release_log.txt; do
+            if [ -f "$f" ]; then
+              echo "--- Compiler / Error lines in $f ---" >> "$LOG_FILE"
+              grep -E "(^e:|^w: |error:|Compilation error|FAILURE:)" "$f" | head -n 40 >> "$LOG_FILE" || true
+              echo "--- Log Tail: $f ---" >> "$LOG_FILE"
+              tail -n 40 "$f" >> "$LOG_FILE"
+              echo "" >> "$LOG_FILE"
+            fi
+          done
+          for f in keystore_decode.log keystore_doctor.log; do
             if [ -f "$f" ]; then
               echo "--- Log: $f ---" >> "$LOG_FILE"
-              tail -n 60 "$f" >> "$LOG_FILE"
-              echo "" >> "$LOG_FILE"
+              tail -n 30 "$f" >> "$LOG_FILE"
             fi
           done
           gh issue create --title "Build Diagnostic #${{ github.run_number }}" --body "Automated build failure log:
