@@ -78,7 +78,7 @@ class SyncQueueManager(private val context: Context) {
     suspend fun drainQueue(
         projectId: String,
         apiService: GitHubApiService,
-        onConflict: (action: QueuedSyncAction, remoteContent: String, remoteSha: String) -> Unit
+        onConflict: suspend (action: QueuedSyncAction, remoteContent: String, remoteSha: String) -> Unit
     ): Result<Int> = withContext(Dispatchers.IO) {
         val actions = getPendingActions(projectId)
         if (actions.isEmpty()) return@withContext Result.success(0)
