@@ -149,7 +149,7 @@ fun ProjectListScreen(
                             projectStorage.deleteProject(p.id)
                             updatedList.removeAll { it.id == p.id }
                             deletedCount++
-                            withContext(Dispatchers.Main) {
+                            coroutineScope.launch {
                                 snackbarHostState.showSnackbar("'${p.name}' was deleted on GitHub and removed from the app.")
                             }
                         }
@@ -354,8 +354,8 @@ fun ProjectListScreen(
                                     val repo = createRes.getOrThrow()
                                     val projDir = projectStorage.getProjectDirectory(target.id)
 
-                                    // Push all files to the new repo
-                                    projDir.walkTopDown().forEach { file ->
+                                    // Push all files to the new repo using for-loop (supports suspend functions)
+                                    for (file in projDir.walkTopDown()) {
                                         if (file.isFile && !file.name.startsWith(".")) {
                                             val rel = file.relativeTo(projDir).path
                                             apiService.createOrUpdateBinaryFile(
@@ -430,8 +430,8 @@ fun ProjectListScreen(
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { deleteFromGitHubAlso = !deleteFromGitHubAlso }
+                                .fillMaxWidth()
+                                .clickable { deleteFromGitHubAlso = !deleteFromGitHubAlso }
                             ) {
                                 Checkbox(
                                     checked = deleteFromGitHubAlso,
