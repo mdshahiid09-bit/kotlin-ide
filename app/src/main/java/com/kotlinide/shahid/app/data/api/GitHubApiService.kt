@@ -182,6 +182,8 @@ class GitHubApiService(private val tokenStorage: TokenStorage) {
         }
     }
 
+    suspend fun validateTokenDetails(tokenToTest: String? = null): Result<TokenValidationInfo> = verifyToken(tokenToTest)
+
     suspend fun getAllUserRepositories(): Result<List<GitHubRepoResponse>> = withContext(Dispatchers.IO) {
         val allRepos = mutableListOf<GitHubRepoResponse>()
         var page = 1
