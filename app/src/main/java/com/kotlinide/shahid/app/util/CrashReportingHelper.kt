@@ -2,46 +2,134 @@ package com.kotlinide.shahid.app.util
 
 import android.content.Context
 import com.kotlinide.shahid.app.data.storage.AppPreferences
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import java.io.File
 import java.io.PrintWriter
 import java.io.StringWriter
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+@Serializable
+data class CrashLogEntry(
+    val id: String = java.util.UUID.randomUUID().toString(),
+    val timestamp: Long = System.currentTimeMillis(),
+    val formattedDate: String = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date()),
+    val tag: String = "CRASH",
+    val message: String,
+    val stackTrace: String,
+    val isFatal: Boolean = false
+)
 
 object CrashReportingHelper {
 
+    private val json = Json {
+        ignoreUnknownKeys = true
+        isLenient = true
+        prettyPrint = true
+    }
+
+    private const val MAX_LOGS = 50
+    private const val CRASH_LOG_FILE = "crash_logs_history.json"
+    private var appContext: Context? = null
+    private var preferences: AppPreferences? = null
+
     fun init(context: Context, appPreferences: AppPreferences) {
+        appContext = context.applicationContext
+        preferences = appPreferences
+
         val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
 
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
-            if (appPreferences.isCrashlyticsOptIn) {
-                try {
-                    val sanitized = sanitizeCrashReport(throwable)
-                    val crashFile = File(context.filesDir, "last_crash.log")
-                    crashFile.writeText(sanitized)
-                } catch (_: Exception) {}
-            }
+            try {
+                recordCrash(
+                    tag = "UNCAUGHT:${thread.name}",
+                    message = throwable.message ?: "Uncaught fatal exception",
+                    throwable = throwable,
+                    isFatal = true
+                )
+            } catch (_: Throwable) {}
+
             defaultHandler?.uncaughtException(thread, throwable)
         }
     }
 
-    private fun sanitizeCrashReport(throwable: Throwable): String {
-        val sw = StringWriter()
-        throwable.printStackTrace(PrintWriter(sw))
-        var rawTrace = sw.toString()
-
-        rawTrace = rawTrace.replace(Regex("ghp_[a-zA-Z0-9]{30,}"), "[REDACTED_GITHUB_TOKEN]")
-        rawTrace = rawTrace.replace(Regex("github_pat_[a-zA-Z0-9_]{30,}"), "[REDACTED_GITHUB_TOKEN]")
-        rawTrace = rawTrace.replace(Regex("(?i)password[=:]\\s*['\"]?[^\\s'\"]+"), "password=[REDACTED]")
-        rawTrace = rawTrace.replace(Regex("(?i)keystore[=:]\\s*['\"]?[^\\s'\"]+"), "keystore=[REDACTED]")
-
-        return "Timestamp: ${System.currentTimeMillis()}\nThread: ${Thread.currentThread().name}\nTrace:\n$rawTrace"
+    @Synchronized
+    fun logHandledException(tag: String, message: String, throwable: Throwable? = null) {
+        recordCrash(tag = tag, message = message, throwable = throwable, isFatal = false)
     }
 
-    fun getLastCrashReport(context: Context): String? {
-        val crashFile = File(context.filesDir, "last_crash.log")
-        return if (crashFile.exists()) {
-            val text = crashFile.readText()
-            crashFile.delete()
-            text
-        } else null
+    @Synchronized
+    fun recordCrash(
+        tag: String,
+        message: String,
+        throwable: Throwable? = null,
+        isFatal: Boolean = false
+    ) {
+        val ctx = appContext ?: return
+        try {
+            val sw = StringWriter()
+            throwable?.printStackTrace(PrintWriter(sw))
+            val rawTrace = sw.toString().ifBlank { message }
+            val sanitized = sanitize(rawTrace)
+
+            val entry = CrashLogEntry(
+                tag = tag,
+                message = sanitize(message),
+                stackTrace = sanitized,
+                isFatal = isFatal
+            )
+
+            val file = File(ctx.filesDir, CRASH_LOG_FILE)
+            val currentLogs = if (file.exists()) {
+                try {
+                    json.decodeFromString<List<CrashLogEntry>>(file.readText()).toMutableList()
+                } catch (_: Exception) {
+                    mutableListOf()
+                }
+            } else {
+                mutableListOf()
+            }
+
+            currentLogs.add(0, entry)
+            val trimmed = currentLogs.take(MAX_LOGS)
+            file.writeText(json.encodeToString(trimmed))
+        } catch (_: Throwable) {
+            // Never crash inside crash reporting
+        }
+    }
+
+    @Synchronized
+    fun getCrashLogs(context: Context): List<CrashLogEntry> {
+        val file = File(context.filesDir, CRASH_LOG_FILE)
+        if (!file.exists()) return emptyList()
+        return try {
+            json.decodeFromString<List<CrashLogEntry>>(file.readText())
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    @Synchronized
+    fun clearCrashLogs(context: Context): Boolean {
+        val file = File(context.filesDir, CRASH_LOG_FILE)
+        return try {
+            if (file.exists()) file.delete() else true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    fun sanitize(input: String): String {
+        var clean = input
+        clean = clean.replace(Regex("ghp_[a-zA-Z0-9]{30,}"), "[REDACTED_PAT_TOKEN]")
+        clean = clean.replace(Regex("github_pat_[a-zA-Z0-9_]{30,}"), "[REDACTED_PAT_TOKEN]")
+        clean = clean.replace(Regex("Bearer\\s+[a-zA-Z0-9_.-]+"), "Bearer [REDACTED]")
+        clean = clean.replace(Regex("(?i)password[=:]\\s*['\"]?[^\\s'\"]+"), "password=[REDACTED]")
+        clean = clean.replace(Regex("(?i)keystore[=:]\\s*['\"]?[^\\s'\"]+"), "keystore=[REDACTED]")
+        clean = clean.replace(Regex("(?i)keypass[=:]\\s*['\"]?[^\\s'\"]+"), "keypass=[REDACTED]")
+        return clean
     }
 }
