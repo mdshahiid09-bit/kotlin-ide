@@ -2,8 +2,8 @@ package com.kotlinide.shahid.app.ui.screens.editor
 
 import android.widget.Toast
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,31 +24,33 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Redo
-import androidx.compose.material.icons.filled.Undo
-import androidx.compose.material.icons.filled.CleaningServices
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Code
-import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.CloudUpload
+import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.FindReplace
-import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FormatAlignLeft
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Redo
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.ScrollableTabRow
@@ -71,10 +73,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.kotlinide.shahid.app.data.api.GitHubApiService
@@ -111,6 +117,7 @@ fun EditorScreen(
     onOpenBuildHistory: (String) -> Unit
 ) {
     val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
     val coroutineScope = rememberCoroutineScope()
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val apiService = remember { GitHubApiService(tokenStorage) }
@@ -120,29 +127,43 @@ fun EditorScreen(
     var activeTabIndex by remember { mutableIntStateOf(0) }
 
     var fileTree by remember { mutableStateOf<List<FileNode>>(emptyList()) }
+    val projectDir = remember(projectId) { projectStorage.getProjectDirectory(projectId) }
 
+    // Editor configurations
+    var fontSizeSp by remember { mutableIntStateOf(13) }
+    var isWordWrapEnabled by remember { mutableStateOf(false) }
+
+    // Search & Replace
     var showSearchBar by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     var replaceQuery by remember { mutableStateOf("") }
     var showReplaceAllDialog by remember { mutableStateOf(false) }
 
+    // Dialogs
+    var showNewItemDialog by remember { mutableStateOf(false) }
+    var targetFolderForNewItem by remember { mutableStateOf(projectDir) }
+
     var selectedNodeForAction by remember { mutableStateOf<FileNode?>(null) }
-    var showFileActionDialog by remember { mutableStateOf(false) }
-    var showNewFileDialog by remember { mutableStateOf(false) }
-    var showNewFolderDialog by remember { mutableStateOf(false) }
     var showRenameDialog by remember { mutableStateOf(false) }
+    var showDeleteConfirmDialog by remember { mutableStateOf(false) }
+    var showDetailsDialog by remember { mutableStateOf(false) }
     var actionInputText by remember { mutableStateOf("") }
 
+    var showGitDialog by remember { mutableStateOf(false) }
+    var showDashboardDialog by remember { mutableStateOf(false) }
+    var showOverflowMenu by remember { mutableStateOf(false) }
+
+    // Build flow
     var isBuilding by remember { mutableStateOf(false) }
     var showBuildLogPanel by remember { mutableStateOf(false) }
     var currentBuildInfo by remember { mutableStateOf<BuildInfo?>(null) }
 
     fun refreshFileTree() {
-        val projectDir = projectStorage.getProjectDirectory(projectId)
         fun buildTree(dir: File, relPrefix: String): List<FileNode> {
             val list = mutableListOf<FileNode>()
             val files = dir.listFiles()?.sortedWith(compareBy({ !it.isDirectory }, { it.name })) ?: return list
             for (f in files) {
+                if (f.name == ".git" || f.name == "build" || f.name == ".gradle") continue
                 val relPath = if (relPrefix.isEmpty()) f.name else "$relPrefix/${f.name}"
                 if (f.isDirectory) {
                     list.add(
@@ -173,7 +194,6 @@ fun EditorScreen(
         if (existingIndex >= 0) {
             activeTabIndex = existingIndex
         } else {
-            val projectDir = projectStorage.getProjectDirectory(projectId)
             val file = File(projectDir, relPath)
             if (file.exists() && !file.isDirectory) {
                 val content = file.readText()
@@ -195,7 +215,6 @@ fun EditorScreen(
     fun saveActiveFile() {
         if (openTabs.isEmpty() || activeTabIndex !in openTabs.indices) return
         val tab = openTabs[activeTabIndex]
-        val projectDir = projectStorage.getProjectDirectory(projectId)
         val file = File(projectDir, tab.filePath)
         file.parentFile?.mkdirs()
         file.writeText(tab.content)
@@ -214,6 +233,19 @@ fun EditorScreen(
             }
         }
         Toast.makeText(context, "Saved ${tab.fileName}", Toast.LENGTH_SHORT).show()
+    }
+
+    // Auto-save debounce effect
+    LaunchedEffect(openTabs.map { it.content }) {
+        delay(2500)
+        openTabs.forEach { tab ->
+            if (tab.isDirty) {
+                val file = File(projectDir, tab.filePath)
+                file.parentFile?.mkdirs()
+                file.writeText(tab.content)
+                tab.markSaved()
+            }
+        }
     }
 
     fun startBuild(cleanBuild: Boolean = false) {
@@ -305,7 +337,6 @@ fun EditorScreen(
         val p = projectStorage.getProject(projectId)
         project = p
         refreshFileTree()
-        val projectDir = projectStorage.getProjectDirectory(projectId)
         val mainActivity = projectDir.walkTopDown().firstOrNull { it.name == "MainActivity.kt" }
         if (mainActivity != null) {
             val rel = mainActivity.relativeTo(projectDir).path
@@ -318,28 +349,52 @@ fun EditorScreen(
         drawerContent = {
             ModalDrawerSheet(
                 drawerContainerColor = DarkSurface,
-                modifier = Modifier.width(280.dp)
+                modifier = Modifier.width(300.dp)
             ) {
-                Column(modifier = Modifier.fillMaxSize().padding(14.dp)) {
-                    Text(
-                        text = "Project Files",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = NeonGreen
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    LazyFileTree(
-                        nodes = fileTree,
-                        onFileClick = { relPath ->
-                            openFileInTab(relPath)
-                            coroutineScope.launch { drawerState.close() }
-                        },
-                        onNodeLongClick = { node ->
-                            selectedNodeForAction = node
-                            showFileActionDialog = true
+                ProjectExplorer(
+                    projectName = project?.name ?: "Project",
+                    nodes = fileTree,
+                    activeFilePath = openTabs.getOrNull(activeTabIndex)?.filePath,
+                    onFileClick = { relPath ->
+                        openFileInTab(relPath)
+                        coroutineScope.launch { drawerState.close() }
+                    },
+                    onAddNewItem = { targetNode ->
+                        targetFolderForNewItem = if (targetNode != null && targetNode.isDirectory) {
+                            File(projectDir, targetNode.path)
+                        } else {
+                            projectDir
                         }
-                    )
-                }
+                        showNewItemDialog = true
+                    },
+                    onRefresh = { refreshFileTree() },
+                    onNodeAction = { node, action ->
+                        selectedNodeForAction = node
+                        when (action) {
+                            "rename" -> {
+                                actionInputText = node.name
+                                showRenameDialog = true
+                            }
+                            "duplicate" -> {
+                                val srcFile = File(projectDir, node.path)
+                                val dupFile = File(srcFile.parentFile, srcFile.nameWithoutExtension + "_copy." + srcFile.extension)
+                                if (srcFile.isDirectory) srcFile.copyRecursively(dupFile) else srcFile.copyTo(dupFile)
+                                refreshFileTree()
+                                Toast.makeText(context, "Duplicated to ${dupFile.name}", Toast.LENGTH_SHORT).show()
+                            }
+                            "copy_path" -> {
+                                clipboardManager.setText(AnnotatedString(node.path))
+                                Toast.makeText(context, "Copied: ${node.path}", Toast.LENGTH_SHORT).show()
+                            }
+                            "details" -> {
+                                showDetailsDialog = true
+                            }
+                            "delete" -> {
+                                showDeleteConfirmDialog = true
+                            }
+                        }
+                    }
+                )
             }
         }
     ) {
@@ -349,43 +404,106 @@ fun EditorScreen(
                     title = {
                         Column {
                             Text(project?.name ?: "Editor", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                            Text(project?.repoName.orEmpty(), style = MaterialTheme.typography.labelSmall, color = DarkTextSecondary)
+                            val currentPath = openTabs.getOrNull(activeTabIndex)?.filePath
+                            Text(currentPath ?: project?.repoName.orEmpty(), style = MaterialTheme.typography.labelSmall, color = DarkTextSecondary)
                         }
                     },
                     navigationIcon = {
                         IconButton(onClick = { coroutineScope.launch { drawerState.open() } }) {
-                            Icon(Icons.Default.Menu, contentDescription = "File Tree")
+                            Icon(Icons.Default.Menu, contentDescription = "Explorer")
                         }
                     },
                     actions = {
+                        // Search / Replace
                         IconButton(onClick = { showSearchBar = !showSearchBar }) {
-                            Icon(Icons.Default.Search, contentDescription = "Find/Replace")
+                            Icon(Icons.Default.Search, contentDescription = "Find/Replace", tint = if (showSearchBar) NeonGreen else Color.White)
                         }
+                        // Git Push / Sync
+                        IconButton(onClick = { showGitDialog = true }) {
+                            Icon(Icons.Default.CloudUpload, contentDescription = "Git Sync", tint = NeonGreen)
+                        }
+                        // Save Active File
                         IconButton(onClick = { saveActiveFile() }) {
                             Icon(Icons.Default.Save, contentDescription = "Save File")
                         }
+                        // Run Build
                         IconButton(onClick = { startBuild(cleanBuild = false) }) {
                             Icon(Icons.Default.PlayArrow, contentDescription = "Build", tint = NeonGreen)
                         }
-                        IconButton(onClick = { onOpenBuildHistory(projectId) }) {
-                            Icon(Icons.Default.History, contentDescription = "History")
+                        // Overflow Menu
+                        Box {
+                            IconButton(onClick = { showOverflowMenu = true }) {
+                                Icon(Icons.Default.MoreVert, contentDescription = "More")
+                            }
+                            DropdownMenu(
+                                expanded = showOverflowMenu,
+                                onDismissRequest = { showOverflowMenu = false },
+                                modifier = Modifier.background(DarkSurface)
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("Project Dashboard", color = Color.White) },
+                                    leadingIcon = { Icon(Icons.Default.Dashboard, contentDescription = null, tint = NeonGreen) },
+                                    onClick = {
+                                        showOverflowMenu = false
+                                        showDashboardDialog = true
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Build History", color = Color.White) },
+                                    leadingIcon = { Icon(Icons.Default.History, contentDescription = null, tint = NeonGreen) },
+                                    onClick = {
+                                        showOverflowMenu = false
+                                        onOpenBuildHistory(projectId)
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(if (isWordWrapEnabled) "Disable Word Wrap" else "Enable Word Wrap", color = Color.White) },
+                                    onClick = {
+                                        showOverflowMenu = false
+                                        isWordWrapEnabled = !isWordWrapEnabled
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Font Size: ${fontSizeSp}sp (Tap to +)", color = Color.White) },
+                                    onClick = {
+                                        fontSizeSp = if (fontSizeSp >= 20) 11 else fontSizeSp + 2
+                                    }
+                                )
+                            }
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = DarkSurface)
                 )
             },
             bottomBar = {
-                if (showBuildLogPanel) {
-                    BuildLogPanel(
-                        buildInfo = currentBuildInfo,
-                        isBuilding = isBuilding,
-                        onClose = { showBuildLogPanel = false },
-                        onRetry = { startBuild(cleanBuild = false) },
-                        onCleanBuild = { startBuild(cleanBuild = true) },
-                        onErrorLineClick = { filePath, lineNum ->
-                            openFileInTab(filePath, lineNum)
-                        }
-                    )
+                Column {
+                    if (openTabs.isNotEmpty()) {
+                        CodingAccessoryBar(
+                            onInsertSymbol = { symbol ->
+                                val activeTab = openTabs.getOrNull(activeTabIndex)
+                                if (activeTab != null) {
+                                    val current = activeTab.content
+                                    val pos = activeTab.cursorPosition.coerceIn(0, current.length)
+                                    val newContent = current.substring(0, pos) + symbol + current.substring(pos)
+                                    activeTab.updateContent(newContent)
+                                    activeTab.cursorPosition = pos + symbol.length
+                                }
+                            }
+                        )
+                    }
+
+                    if (showBuildLogPanel) {
+                        BuildLogPanel(
+                            buildInfo = currentBuildInfo,
+                            isBuilding = isBuilding,
+                            onClose = { showBuildLogPanel = false },
+                            onRetry = { startBuild(cleanBuild = false) },
+                            onCleanBuild = { startBuild(cleanBuild = true) },
+                            onErrorLineClick = { filePath, lineNum ->
+                                openFileInTab(filePath, lineNum)
+                            }
+                        )
+                    }
                 }
             }
         ) { innerPadding ->
@@ -395,6 +513,7 @@ fun EditorScreen(
                     .padding(innerPadding)
                     .background(DarkBackground)
             ) {
+                // Tab Row
                 if (openTabs.isNotEmpty()) {
                     ScrollableTabRow(
                         selectedTabIndex = activeTabIndex.coerceIn(0, openTabs.lastIndex),
@@ -424,7 +543,7 @@ fun EditorScreen(
                                         Spacer(modifier = Modifier.width(8.dp))
                                         Icon(
                                             Icons.Default.Close,
-                                            contentDescription = "Close Tab",
+                                            contentDescription = "Close",
                                             modifier = Modifier
                                                 .size(14.dp)
                                                 .clickable {
@@ -441,6 +560,7 @@ fun EditorScreen(
                     }
                 }
 
+                // In-file Find & Replace Bar
                 if (showSearchBar && openTabs.isNotEmpty()) {
                     val currentTab = openTabs[activeTabIndex]
                     Column(
@@ -453,9 +573,9 @@ fun EditorScreen(
                             OutlinedTextField(
                                 value = searchQuery,
                                 onValueChange = { searchQuery = it },
-                                placeholder = { Text("Find") },
+                                placeholder = { Text("Find in file") },
                                 singleLine = true,
-                                modifier = Modifier.weight(1f).height(48.dp)
+                                modifier = Modifier.weight(1f).height(46.dp)
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             OutlinedTextField(
@@ -463,7 +583,7 @@ fun EditorScreen(
                                 onValueChange = { replaceQuery = it },
                                 placeholder = { Text("Replace") },
                                 singleLine = true,
-                                modifier = Modifier.weight(1f).height(48.dp)
+                                modifier = Modifier.weight(1f).height(46.dp)
                             )
                         }
                         Spacer(modifier = Modifier.height(6.dp))
@@ -478,14 +598,14 @@ fun EditorScreen(
                                         }
                                     }
                                 },
-                                modifier = Modifier.height(36.dp)
+                                modifier = Modifier.height(34.dp)
                             ) {
                                 Text("Replace")
                             }
                             Spacer(modifier = Modifier.width(6.dp))
                             Button(
                                 onClick = { showReplaceAllDialog = true },
-                                modifier = Modifier.height(36.dp)
+                                modifier = Modifier.height(34.dp)
                             ) {
                                 Text("Replace All")
                             }
@@ -493,6 +613,7 @@ fun EditorScreen(
                     }
                 }
 
+                // Editor Controls Bar
                 if (openTabs.isNotEmpty()) {
                     val activeTab = openTabs[activeTabIndex]
                     Row(
@@ -502,11 +623,11 @@ fun EditorScreen(
                             .padding(horizontal = 8.dp, vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        IconButton(onClick = { activeTab.undo() }, modifier = Modifier.size(32.dp)) {
-                            Icon(Icons.Default.Undo, contentDescription = "Undo", modifier = Modifier.size(18.dp))
+                        IconButton(onClick = { activeTab.undo() }, modifier = Modifier.size(30.dp)) {
+                            Icon(Icons.Default.Undo, contentDescription = "Undo", modifier = Modifier.size(16.dp))
                         }
-                        IconButton(onClick = { activeTab.redo() }, modifier = Modifier.size(32.dp)) {
-                            Icon(Icons.Default.Redo, contentDescription = "Redo", modifier = Modifier.size(18.dp))
+                        IconButton(onClick = { activeTab.redo() }, modifier = Modifier.size(30.dp)) {
+                            Icon(Icons.Default.Redo, contentDescription = "Redo", modifier = Modifier.size(16.dp))
                         }
                         IconButton(
                             onClick = {
@@ -514,11 +635,13 @@ fun EditorScreen(
                                 activeTab.updateContent(formatted)
                                 Toast.makeText(context, "Code Formatted", Toast.LENGTH_SHORT).show()
                             },
-                            modifier = Modifier.size(32.dp)
+                            modifier = Modifier.size(30.dp)
                         ) {
-                            Icon(Icons.Default.FormatAlignLeft, contentDescription = "Format", modifier = Modifier.size(18.dp))
+                            Icon(Icons.Default.FormatAlignLeft, contentDescription = "Format", modifier = Modifier.size(16.dp))
                         }
+
                         Spacer(modifier = Modifier.weight(1f))
+
                         Text(
                             text = activeTab.filePath,
                             style = MaterialTheme.typography.labelSmall,
@@ -527,52 +650,73 @@ fun EditorScreen(
                     }
                 }
 
+                // Main Code Area
                 if (openTabs.isNotEmpty() && activeTabIndex in openTabs.indices) {
                     val currentTab = openTabs[activeTabIndex]
                     val lines = currentTab.content.lines()
                     val extension = currentTab.fileName.substringAfterLast('.', "")
                     val highlighter = remember(extension) { SyntaxHighlighter(extension) }
 
-                    Row(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .verticalScroll(rememberScrollState())
-                            .horizontalScroll(rememberScrollState())
-                    ) {
+                    val scrollModifier = if (isWordWrapEnabled) {
+                        Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+                    } else {
+                        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).horizontalScroll(rememberScrollState())
+                    }
+
+                    Row(modifier = scrollModifier) {
+                        // Line numbers column
                         Column(
                             modifier = Modifier
                                 .background(DarkSurface)
                                 .padding(horizontal = 8.dp, vertical = 6.dp)
                         ) {
-                            for (i in 1..lines.size) {
+                            for (i in 1..lines.size.coerceAtLeast(1)) {
                                 Text(
                                     text = "$i",
                                     fontFamily = FontFamily.Monospace,
-                                    fontSize = 13.sp,
+                                    fontSize = fontSizeSp.sp,
                                     color = DarkTextSecondary,
-                                    lineHeight = 19.sp
+                                    lineHeight = (fontSizeSp + 6).sp
                                 )
                             }
                         }
 
+                        // Code Editor BasicTextField
                         Box(modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 6.dp)) {
+                            var textFieldValue by remember(currentTab.filePath) {
+                                mutableStateOf(TextFieldValue(currentTab.content, TextRange(currentTab.cursorPosition)))
+                            }
+
+                            // Keep tab content synchronized
+                            if (textFieldValue.text != currentTab.content) {
+                                textFieldValue = textFieldValue.copy(text = currentTab.content)
+                            }
+
                             BasicTextField(
-                                value = currentTab.content,
-                                onValueChange = { newText ->
-                                    if (newText.length > currentTab.content.length && newText.endsWith("\n")) {
-                                        val lastLine = currentTab.content.lines().lastOrNull().orEmpty()
+                                value = textFieldValue,
+                                onValueChange = { newVal ->
+                                    val oldText = currentTab.content
+                                    val newText = newVal.text
+                                    currentTab.cursorPosition = newVal.selection.start
+
+                                    // Auto-indent & auto-close brackets
+                                    if (newText.length > oldText.length && newText.endsWith("\n")) {
+                                        val lastLine = oldText.lines().lastOrNull().orEmpty()
                                         val leadingSpaces = " ".repeat(lastLine.takeWhile { it == ' ' }.length)
                                         val extraIndent = if (lastLine.trimEnd().endsWith("{")) "    " else ""
-                                        currentTab.updateContent(newText + leadingSpaces + extraIndent)
+                                        val indented = newText + leadingSpaces + extraIndent
+                                        currentTab.updateContent(indented)
+                                        textFieldValue = newVal.copy(text = indented, selection = TextRange(indented.length))
                                     } else {
                                         currentTab.updateContent(newText)
+                                        textFieldValue = newVal
                                     }
                                 },
                                 visualTransformation = highlighter,
                                 textStyle = TextStyle(
                                     fontFamily = FontFamily.Monospace,
-                                    fontSize = 13.sp,
-                                    lineHeight = 19.sp,
+                                    fontSize = fontSizeSp.sp,
+                                    lineHeight = (fontSizeSp + 6).sp,
                                     color = DarkTextPrimary
                                 ),
                                 cursorBrush = SolidColor(NeonGreen),
@@ -582,237 +726,175 @@ fun EditorScreen(
                     }
                 } else {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("Select a file from the left drawer to edit", color = DarkTextSecondary)
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("Open a file from the explorer drawer to edit code", color = DarkTextSecondary)
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Button(
+                                onClick = { coroutineScope.launch { drawerState.open() } },
+                                colors = ButtonDefaults.buttonColors(containerColor = NeonGreen, contentColor = Color.Black)
+                            ) {
+                                Text("Open Explorer")
+                            }
+                        }
                     }
                 }
             }
-        }
-
-        if (showReplaceAllDialog && openTabs.isNotEmpty()) {
-            AlertDialog(
-                onDismissRequest = { showReplaceAllDialog = false },
-                title = { Text("Confirm Replace All") },
-                text = { Text("Are you sure you want to replace all occurrences of '$searchQuery' with '$replaceQuery'?") },
-                confirmButton = {
-                    Button(
-                        onClick = {
-                            val activeTab = openTabs[activeTabIndex]
-                            activeTab.updateContent(activeTab.content.replace(searchQuery, replaceQuery))
-                            showReplaceAllDialog = false
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = NeonGreen, contentColor = Color.Black)
-                    ) {
-                        Text("Replace All")
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showReplaceAllDialog = false }) { Text("Cancel") }
-                }
-            )
-        }
-
-        if (showFileActionDialog && selectedNodeForAction != null) {
-            val node = selectedNodeForAction!!
-            AlertDialog(
-                onDismissRequest = { showFileActionDialog = false },
-                title = { Text(node.name) },
-                text = {
-                    Column {
-                        TextButton(
-                            onClick = {
-                                showFileActionDialog = false
-                                actionInputText = node.name
-                                showRenameDialog = true
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text("Rename")
-                        }
-                        if (node.isDirectory) {
-                            TextButton(
-                                onClick = {
-                                    showFileActionDialog = false
-                                    actionInputText = ""
-                                    showNewFileDialog = true
-                                },
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text("New File")
-                            }
-                            TextButton(
-                                onClick = {
-                                    showFileActionDialog = false
-                                    actionInputText = ""
-                                    showNewFolderDialog = true
-                                },
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text("New Folder")
-                            }
-                        }
-                        TextButton(
-                            onClick = {
-                                showFileActionDialog = false
-                                val projectDir = projectStorage.getProjectDirectory(projectId)
-                                val target = File(projectDir, node.path)
-                                target.deleteRecursively()
-                                openTabs.removeAll { it.filePath.startsWith(node.path) }
-                                refreshFileTree()
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text("Delete", color = RedError)
-                        }
-                    }
-                },
-                confirmButton = {}
-            )
-        }
-
-        if (showRenameDialog && selectedNodeForAction != null) {
-            AlertDialog(
-                onDismissRequest = { showRenameDialog = false },
-                title = { Text("Rename") },
-                text = {
-                    OutlinedTextField(
-                        value = actionInputText,
-                        onValueChange = { actionInputText = it },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                },
-                confirmButton = {
-                    Button(
-                        onClick = {
-                            val node = selectedNodeForAction!!
-                            val projectDir = projectStorage.getProjectDirectory(projectId)
-                            val oldFile = File(projectDir, node.path)
-                            val newFile = File(oldFile.parentFile, actionInputText.trim())
-                            oldFile.renameTo(newFile)
-                            showRenameDialog = false
-                            refreshFileTree()
-                        }
-                    ) { Text("Rename") }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showRenameDialog = false }) { Text("Cancel") }
-                }
-            )
-        }
-
-        if (showNewFileDialog && selectedNodeForAction != null) {
-            AlertDialog(
-                onDismissRequest = { showNewFileDialog = false },
-                title = { Text("New File") },
-                text = {
-                    OutlinedTextField(
-                        value = actionInputText,
-                        onValueChange = { actionInputText = it },
-                        placeholder = { Text("e.g. MyComponent.kt") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                },
-                confirmButton = {
-                    Button(
-                        onClick = {
-                            val node = selectedNodeForAction!!
-                            val projectDir = projectStorage.getProjectDirectory(projectId)
-                            val parentDir = File(projectDir, node.path)
-                            val newFile = File(parentDir, actionInputText.trim())
-                            newFile.createNewFile()
-                            showNewFileDialog = false
-                            refreshFileTree()
-                        }
-                    ) { Text("Create File") }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showNewFileDialog = false }) { Text("Cancel") }
-                }
-            )
-        }
-
-        if (showNewFolderDialog && selectedNodeForAction != null) {
-            AlertDialog(
-                onDismissRequest = { showNewFolderDialog = false },
-                title = { Text("New Folder") },
-                text = {
-                    OutlinedTextField(
-                        value = actionInputText,
-                        onValueChange = { actionInputText = it },
-                        placeholder = { Text("e.g. components") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                },
-                confirmButton = {
-                    Button(
-                        onClick = {
-                            val node = selectedNodeForAction!!
-                            val projectDir = projectStorage.getProjectDirectory(projectId)
-                            val parentDir = File(projectDir, node.path)
-                            val newFolder = File(parentDir, actionInputText.trim())
-                            newFolder.mkdirs()
-                            showNewFolderDialog = false
-                            refreshFileTree()
-                        }
-                    ) { Text("Create Folder") }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showNewFolderDialog = false }) { Text("Cancel") }
-                }
-            )
         }
     }
-}
 
-@Composable
-fun LazyFileTree(
-    nodes: List<FileNode>,
-    onFileClick: (String) -> Unit,
-    onNodeLongClick: (FileNode) -> Unit,
-    level: Int = 0
-) {
-    Column {
-        nodes.forEach { node ->
-            var isExpanded by remember { mutableStateOf(false) }
+    // New Item Dialog
+    if (showNewItemDialog) {
+        NewItemDialog(
+            projectRoot = projectDir,
+            targetDirectory = targetFolderForNewItem,
+            onDismiss = { showNewItemDialog = false },
+            onItemCreated = { newFile, shouldOpen ->
+                refreshFileTree()
+                if (shouldOpen && !newFile.isDirectory) {
+                    val rel = newFile.relativeTo(projectDir).path
+                    openFileInTab(rel)
+                }
+            }
+        )
+    }
 
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable {
-                        if (node.isDirectory) {
-                            isExpanded = !isExpanded
-                        } else {
-                            onFileClick(node.path)
-                        }
+    // Git Workflow Dialog
+    if (showGitDialog && project != null) {
+        GitHubGitDialog(
+            project = project!!,
+            projectRoot = projectDir,
+            apiService = apiService,
+            onDismiss = { showGitDialog = false },
+            onPullComplete = {
+                refreshFileTree()
+                openTabs.forEach { tab ->
+                    val f = File(projectDir, tab.filePath)
+                    if (f.exists()) {
+                        tab.content = f.readText()
+                        tab.savedContent = tab.content
                     }
-                    .padding(start = (level * 14).dp, top = 4.dp, bottom = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    imageVector = if (node.isDirectory) Icons.Default.Folder else Icons.Default.Description,
-                    contentDescription = null,
-                    tint = if (node.isDirectory) OrangeWarning else if (node.name.endsWith(".kt")) NeonGreen else Color.Gray,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = node.name,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = DarkTextPrimary,
-                    modifier = Modifier.weight(1f)
-                )
+                }
             }
+        )
+    }
 
-            if (node.isDirectory && isExpanded) {
-                LazyFileTree(
-                    nodes = node.children,
-                    onFileClick = onFileClick,
-                    onNodeLongClick = onNodeLongClick,
-                    level = level + 1
+    // Project Dashboard Dialog
+    if (showDashboardDialog && project != null) {
+        ProjectDashboardDialog(
+            project = project!!,
+            projectStorage = projectStorage,
+            onDismiss = { showDashboardDialog = false },
+            onTriggerBuild = { startBuild(cleanBuild = false) }
+        )
+    }
+
+    // Rename Dialog
+    if (showRenameDialog && selectedNodeForAction != null) {
+        val node = selectedNodeForAction!!
+        AlertDialog(
+            onDismissRequest = { showRenameDialog = false },
+            title = { Text("Rename ${node.name}") },
+            text = {
+                OutlinedTextField(
+                    value = actionInputText,
+                    onValueChange = { actionInputText = it },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
                 )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val src = File(projectDir, node.path)
+                        val dst = File(src.parentFile, actionInputText.trim())
+                        if (src.renameTo(dst)) {
+                            // Update open tab if renamed
+                            val tabIndex = openTabs.indexOfFirst { it.filePath == node.path }
+                            if (tabIndex >= 0) {
+                                val rel = dst.relativeTo(projectDir).path
+                                openTabs[tabIndex] = openTabs[tabIndex].copy(filePath = rel, fileName = dst.name)
+                            }
+                            refreshFileTree()
+                            showRenameDialog = false
+                            Toast.makeText(context, "Renamed to ${dst.name}", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = NeonGreen, contentColor = Color.Black)
+                ) { Text("Rename") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRenameDialog = false }) { Text("Cancel") }
             }
-        }
+        )
+    }
+
+    // Delete Confirmation Dialog
+    if (showDeleteConfirmDialog && selectedNodeForAction != null) {
+        val node = selectedNodeForAction!!
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirmDialog = false },
+            title = { Text("Delete ${node.name}?") },
+            text = { Text("Are you sure you want to delete '${node.name}' permanently? This cannot be undone.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val target = File(projectDir, node.path)
+                        target.deleteRecursively()
+                        openTabs.removeAll { it.filePath.startsWith(node.path) }
+                        refreshFileTree()
+                        showDeleteConfirmDialog = false
+                        Toast.makeText(context, "Deleted ${node.name}", Toast.LENGTH_SHORT).show()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = RedError, contentColor = Color.White)
+                ) { Text("Delete") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirmDialog = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    // File Details Dialog
+    if (showDetailsDialog && selectedNodeForAction != null) {
+        val node = selectedNodeForAction!!
+        val file = File(projectDir, node.path)
+        val sizeStr = if (file.isDirectory) "${file.listFiles()?.size ?: 0} items" else "${file.length() / 1024} KB"
+        AlertDialog(
+            onDismissRequest = { showDetailsDialog = false },
+            title = { Text(node.name) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("• Relative Path: ${node.path}", style = MaterialTheme.typography.bodySmall)
+                    Text("• Type: ${if (node.isDirectory) "Directory" else "File"}", style = MaterialTheme.typography.bodySmall)
+                    Text("• Size: $sizeStr", style = MaterialTheme.typography.bodySmall)
+                    Text("• Last Modified: ${java.util.Date(file.lastModified())}", style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showDetailsDialog = false }) { Text("Close") }
+            }
+        )
+    }
+
+    // Replace All Confirmation Dialog
+    if (showReplaceAllDialog && openTabs.isNotEmpty()) {
+        AlertDialog(
+            onDismissRequest = { showReplaceAllDialog = false },
+            title = { Text("Confirm Replace All") },
+            text = { Text("Replace all occurrences of '$searchQuery' with '$replaceQuery'?") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val activeTab = openTabs[activeTabIndex]
+                        activeTab.updateContent(activeTab.content.replace(searchQuery, replaceQuery))
+                        showReplaceAllDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = NeonGreen, contentColor = Color.Black)
+                ) { Text("Replace All") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showReplaceAllDialog = false }) { Text("Cancel") }
+            }
+        )
     }
 }

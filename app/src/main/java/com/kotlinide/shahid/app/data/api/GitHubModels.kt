@@ -106,6 +106,44 @@ data class GitTreeResponse(
 )
 
 @Serializable
+data class GitHubCommitItem(
+    val sha: String,
+    val commit: GitHubCommitData,
+    val author: GitHubUser? = null,
+    @SerialName("html_url") val htmlUrl: String = ""
+)
+
+@Serializable
+data class GitHubCommitData(
+    val message: String,
+    val author: GitHubCommitAuthor? = null
+)
+
+@Serializable
+data class GitHubCommitAuthor(
+    val name: String = "",
+    val email: String = "",
+    val date: String = ""
+)
+
+@Serializable
+data class GitHubBranchItem(
+    val name: String,
+    val commit: GitHubBranchCommit
+)
+
+@Serializable
+data class GitHubBranchCommit(
+    val sha: String
+)
+
+@Serializable
+data class CreateGitRefRequest(
+    val ref: String,
+    val sha: String
+)
+
+@Serializable
 data class WorkflowDispatchRequest(
     val ref: String = "main",
     val inputs: Map<String, String> = emptyMap()

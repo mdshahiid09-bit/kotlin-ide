@@ -207,7 +207,7 @@ class GitHubApiService(private val tokenStorage: TokenStorage) {
             )
         }
 
-        // Step 1: Pre-flight verify token with GET https://api.github.com/user
+        // Pre-flight verify token
         val verifyRequest = Request.Builder()
             .url("https://api.github.com/user")
             .header("Authorization", "Bearer $token")
@@ -235,7 +235,7 @@ class GitHubApiService(private val tokenStorage: TokenStorage) {
             )
         }
 
-        // Step 2: Token is verified (HTTP 200). Now POST https://api.github.com/user/repos
+        // Token verified. Proceed to POST /user/repos
         val reqBody = CreateRepoRequest(
             name = name,
             description = description,
@@ -302,7 +302,6 @@ class GitHubApiService(private val tokenStorage: TokenStorage) {
         branch: String = "main",
         sha: String? = null
     ): Result<FileContentResponse> = withContext(Dispatchers.IO) {
-        // If sha is not explicitly provided, check if the file already exists on GitHub to obtain its SHA
         var targetSha = sha
         if (targetSha == null) {
             val checkReq = newRequestBuilder("https://api.github.com/repos/$owner/$repo/contents/$path?ref=$branch")
@@ -318,9 +317,7 @@ class GitHubApiService(private val tokenStorage: TokenStorage) {
                         }
                     }
                 }
-            } catch (_: Exception) {
-                // File does not exist, proceed with targetSha = null
-            }
+            } catch (_: Exception) {}
         }
 
         val base64Content = Base64.encodeToString(bytes, Base64.NO_WRAP)
@@ -414,6 +411,80 @@ class GitHubApiService(private val tokenStorage: TokenStorage) {
                 } else {
                     val respBody = response.body?.string().orEmpty()
                     Result.failure(parseGitHubError(response.code, respBody))
+                }
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun listCommits(
+        owner: String,
+        repo: String,
+        branch: String = "main",
+        perPage: Int = 15
+    ): Result<List<GitHubCommitItem>> = withContext(Dispatchers.IO) {
+        val request = newRequestBuilder("https://api.github.com/repos/$owner/$repo/commits?sha=$branch&per_page=$perPage")
+            .get()
+            .build()
+
+        try {
+            client.newCall(request).execute().use { response ->
+                val body = response.body?.string().orEmpty()
+                if (response.isSuccessful) {
+                    val commits = json.decodeFromString<List<GitHubCommitItem>>(body)
+                    Result.success(commits)
+                } else {
+                    Result.failure(parseGitHubError(response.code, body))
+                }
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun listBranches(
+        owner: String,
+        repo: String
+    ): Result<List<GitHubBranchItem>> = withContext(Dispatchers.IO) {
+        val request = newRequestBuilder("https://api.github.com/repos/$owner/$repo/branches")
+            .get()
+            .build()
+
+        try {
+            client.newCall(request).execute().use { response ->
+                val body = response.body?.string().orEmpty()
+                if (response.isSuccessful) {
+                    val branches = json.decodeFromString<List<GitHubBranchItem>>(body)
+                    Result.success(branches)
+                } else {
+                    Result.failure(parseGitHubError(response.code, body))
+                }
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun createBranch(
+        owner: String,
+        repo: String,
+        branchName: String,
+        fromSha: String
+    ): Result<Boolean> = withContext(Dispatchers.IO) {
+        val req = CreateGitRefRequest(ref = "refs/heads/$branchName", sha = fromSha)
+        val bodyString = json.encodeToString(req)
+        val request = newRequestBuilder("https://api.github.com/repos/$owner/$repo/git/refs")
+            .post(bodyString.toRequestBody(jsonMediaType))
+            .build()
+
+        try {
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful || response.code == 201) {
+                    Result.success(true)
+                } else {
+                    val body = response.body?.string().orEmpty()
+                    Result.failure(parseGitHubError(response.code, body))
                 }
             }
         } catch (e: Exception) {
