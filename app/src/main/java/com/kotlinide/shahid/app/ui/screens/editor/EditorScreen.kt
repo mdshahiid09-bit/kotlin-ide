@@ -204,6 +204,9 @@ fun EditorScreen(
     var showBuildLogPanel by remember { mutableStateOf(false) }
     var currentBuildInfo by remember { mutableStateOf<BuildInfo?>(null) }
 
+    // Real-time Debounce Trigger
+    var lastEditTimestamp by remember { mutableStateOf(0L) }
+
     fun refreshFileTree() {
         coroutineScope.launch(Dispatchers.IO) {
             fun buildTree(dir: File, relPrefix: String): List<FileNode> {
@@ -360,14 +363,15 @@ fun EditorScreen(
         }
     }
 
-    // Debounced Auto-Save Effect
-    LaunchedEffect(openTabs.map { it.content }) {
+    // Debounced Auto-Save Effect (triggers 2.5s after typing pauses)
+    LaunchedEffect(lastEditTimestamp) {
+        if (lastEditTimestamp == 0L) return@LaunchedEffect
         delay(2500)
         val dirtyTabs = openTabs.filter { it.isDirty }
         if (dirtyTabs.isNotEmpty()) {
             val currentProj = project
-            coroutineScope.launch(Dispatchers.IO) {
-                dirtyTabs.forEach { tab ->
+            withContext(Dispatchers.IO) {
+                for (tab in dirtyTabs) {
                     val file = File(projectDir, tab.filePath)
                     file.parentFile?.mkdirs()
                     file.writeText(tab.content)
@@ -458,7 +462,7 @@ fun EditorScreen(
                     }
                     lastKnownRemoteSha = latestSha
                 }
-            } catch (_: Exception) {}
+            } catch (e: Exception) {}
         }
     }
 
@@ -889,6 +893,7 @@ fun EditorScreen(
                                     val newContent = current.substring(0, pos) + symbol + current.substring(pos)
                                     activeTab.updateContent(newContent)
                                     activeTab.cursorPosition = pos + symbol.length
+                                    lastEditTimestamp = System.currentTimeMillis()
                                     coroutineScope.launch {
                                         draftStorage.saveDraft(projectId, activeTab.filePath, newContent)
                                     }
@@ -1000,6 +1005,7 @@ fun EditorScreen(
                                         if (idx >= 0) {
                                             val newContent = currentTab.content.replaceFirst(searchQuery, replaceQuery)
                                             currentTab.updateContent(newContent)
+                                            lastEditTimestamp = System.currentTimeMillis()
                                             coroutineScope.launch {
                                                 draftStorage.saveDraft(projectId, currentTab.filePath, newContent)
                                             }
@@ -1041,6 +1047,7 @@ fun EditorScreen(
                             onClick = {
                                 val formatted = activeTab.content.lines().joinToString("\n") { it.trimEnd() }
                                 activeTab.updateContent(formatted)
+                                lastEditTimestamp = System.currentTimeMillis()
                                 coroutineScope.launch {
                                     draftStorage.saveDraft(projectId, activeTab.filePath, formatted)
                                 }
@@ -1125,6 +1132,7 @@ fun EditorScreen(
                                     val oldText = currentTab.content
                                     val newText = newVal.text
                                     currentTab.cursorPosition = newVal.selection.start
+                                    lastEditTimestamp = System.currentTimeMillis()
 
                                     // Auto-indent on newline
                                     if (newText.length > oldText.length && newText.endsWith("\n")) {
@@ -1577,6 +1585,7 @@ fun EditorScreen(
                         val activeTab = openTabs[activeTabIndex]
                         val replaced = activeTab.content.replace(searchQuery, replaceQuery)
                         activeTab.updateContent(replaced)
+                        lastEditTimestamp = System.currentTimeMillis()
                         coroutineScope.launch {
                             draftStorage.saveDraft(projectId, activeTab.filePath, replaced)
                         }
