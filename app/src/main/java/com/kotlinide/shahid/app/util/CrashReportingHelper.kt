@@ -50,7 +50,7 @@ object CrashReportingHelper {
                     throwable = throwable,
                     isFatal = true
                 )
-            } catch (_: Throwable) {}
+            } catch (t: Throwable) {}
 
             defaultHandler?.uncaughtException(thread, throwable)
         }
@@ -86,7 +86,7 @@ object CrashReportingHelper {
             val currentLogs = if (file.exists()) {
                 try {
                     json.decodeFromString<List<CrashLogEntry>>(file.readText()).toMutableList()
-                } catch (_: Exception) {
+                } catch (e: Exception) {
                     mutableListOf()
                 }
             } else {
@@ -96,7 +96,7 @@ object CrashReportingHelper {
             currentLogs.add(0, entry)
             val trimmed = currentLogs.take(MAX_LOGS)
             file.writeText(json.encodeToString(trimmed))
-        } catch (_: Throwable) {
+        } catch (t: Throwable) {
             // Never crash inside crash reporting
         }
     }
@@ -107,7 +107,7 @@ object CrashReportingHelper {
         if (!file.exists()) return emptyList()
         return try {
             json.decodeFromString<List<CrashLogEntry>>(file.readText())
-        } catch (_: Exception) {
+        } catch (e: Exception) {
             emptyList()
         }
     }
@@ -117,7 +117,7 @@ object CrashReportingHelper {
         val file = File(context.filesDir, CRASH_LOG_FILE)
         return try {
             if (file.exists()) file.delete() else true
-        } catch (_: Exception) {
+        } catch (e: Exception) {
             false
         }
     }
