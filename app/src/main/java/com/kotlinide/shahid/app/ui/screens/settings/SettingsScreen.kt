@@ -2,6 +2,7 @@ package com.kotlinide.shahid.app.ui.screens.settings
 
 import android.widget.Toast
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,9 +19,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material3.Button
@@ -62,7 +65,8 @@ fun SettingsScreen(
     appPreferences: AppPreferences,
     onBack: () -> Unit,
     onLogout: () -> Unit,
-    onThemeToggle: (Boolean) -> Unit
+    onThemeToggle: (Boolean) -> Unit,
+    onOpenCrashLog: () -> Unit
 ) {
     val context = LocalContext.current
     var isDarkTheme by remember { mutableStateOf(appPreferences.isDarkTheme) }
@@ -91,6 +95,7 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            // App Identity Header
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 shape = RoundedCornerShape(12.dp)
@@ -112,7 +117,7 @@ fun SettingsScreen(
                     Spacer(modifier = Modifier.width(14.dp))
                     Column {
                         Text("Kotlin IDE", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        Text("v1.0.0 • Build Android apps from your phone", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Build Android apps from your phone", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
@@ -159,24 +164,29 @@ fun SettingsScreen(
                 }
             }
 
-            Text("Appearance & Telemetry", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text("Appearance & Diagnostics", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
 
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 shape = RoundedCornerShape(12.dp)
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
+                    // Dark Theme Switch with clearly defined thumb and track colors
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Default.DarkMode, contentDescription = null, tint = NeonGreen)
                             Spacer(modifier = Modifier.width(10.dp))
                             Column {
                                 Text("Dark Theme", fontWeight = FontWeight.SemiBold)
-                                Text("High-contrast developer theme", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(
+                                    text = if (isDarkTheme) "Enabled (High-contrast developer style)" else "Disabled (Standard light theme)",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
                         }
                         Switch(
@@ -186,12 +196,20 @@ fun SettingsScreen(
                                 appPreferences.isDarkTheme = it
                                 onThemeToggle(it)
                             },
-                            colors = SwitchDefaults.colors(checkedThumbColor = NeonGreen)
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color(0xFF00FF66),
+                                checkedTrackColor = Color(0xFF1B382B),
+                                checkedBorderColor = Color(0xFF00FF66),
+                                uncheckedThumbColor = Color(0xFFC0C0C0),
+                                uncheckedTrackColor = Color(0xFF333333),
+                                uncheckedBorderColor = Color(0xFF666666)
+                            )
                         )
                     }
 
                     Spacer(modifier = Modifier.height(16.dp))
 
+                    // Crash Reporting Opt-In Switch
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -202,7 +220,11 @@ fun SettingsScreen(
                             Spacer(modifier = Modifier.width(10.dp))
                             Column {
                                 Text("Crash Reporting (Opt-In)", fontWeight = FontWeight.SemiBold)
-                                Text("Anonymized stack traces. Sensitive data, keystores, tokens, and code are NEVER sent.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(
+                                    text = if (isCrashlyticsOptIn) "Enabled (Sensitive tokens and code are NEVER sent)" else "Disabled (Strictly local logs only)",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
                         }
                         Spacer(modifier = Modifier.width(8.dp))
@@ -212,8 +234,37 @@ fun SettingsScreen(
                                 isCrashlyticsOptIn = it
                                 appPreferences.isCrashlyticsOptIn = it
                             },
-                            colors = SwitchDefaults.colors(checkedThumbColor = NeonGreen)
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color(0xFF00FF66),
+                                checkedTrackColor = Color(0xFF1B382B),
+                                checkedBorderColor = Color(0xFF00FF66),
+                                uncheckedThumbColor = Color(0xFFC0C0C0),
+                                uncheckedTrackColor = Color(0xFF333333),
+                                uncheckedBorderColor = Color(0xFF666666)
+                            )
                         )
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // Crash Log Screen Navigation Entry
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onOpenCrashLog() }
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.History, contentDescription = null, tint = NeonGreen)
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column {
+                                Text("Crash & Error Logs", fontWeight = FontWeight.SemiBold)
+                                Text("Inspect last 50 local errors and stack traces", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
