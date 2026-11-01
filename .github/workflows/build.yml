@@ -61,24 +61,63 @@ jobs:
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
-          python3 - << 'EOF'
+          python3 - << 'EOF' 2>&1 | tee keystore_decode.log
           import os, base64, sys
+
           raw = os.environ.get("KEYSTORE_BASE64", "")
           clean = "".join(raw.split()).strip("\"'")
-          if not clean:
-              print("ERROR: KEYSTORE_BASE64 is empty")
-              sys.exit(1)
+          print(f"Base64 raw length: {len(raw)}, clean length: {len(clean)}")
+
+          if "," in clean and "base64" in clean:
+              clean = clean.split(",")[-1]
+
+          data = base64.b64decode(clean)
+          print(f"Decoded size: {len(data)} bytes")
+          print(f"First 32 bytes (hex): {data[:32].hex()}")
+          try:
+              text_preview = data[:64].decode("utf-8", errors="replace")
+              print(f"First 64 bytes (text): {repr(text_preview)}")
+          except Exception:
+              pass
+
+          try:
+              data2 = base64.b64decode(data, validate=True)
+              if len(data2) > 100 and len(data2) < len(data):
+                  print(f"NOTICE: Double base64 detected! Inner size: {len(data2)} bytes, hex: {data2[:32].hex()}")
+                  data = data2
+          except Exception:
+              pass
+
           ks_dir = os.path.join(os.environ.get("RUNNER_TEMP", "/tmp"), "keystore")
           os.makedirs(ks_dir, exist_ok=True)
           ks_file = os.path.join(ks_dir, "release.jks")
-          data = base64.b64decode(clean)
           with open(ks_file, "wb") as f:
               f.write(data)
           os.chmod(ks_file, 0o600)
-          print(f"Decoded keystore size: {len(data)} bytes")
+
           with open(os.environ["GITHUB_ENV"], "a") as f:
               f.write(f"KEYSTORE_FILE={ks_file}\n")
           EOF
+
+      - name: Inspect Keystore File Type
+        if: env.HAS_KEYSTORE == 'true'
+        env:
+          KEYSTORE_FILE: ${{ env.KEYSTORE_FILE }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+        run: |
+          {
+            echo "=== Linux file utility output ==="
+            file "$KEYSTORE_FILE"
+
+            echo "=== OpenSSL PKCS12 check ==="
+            openssl pkcs12 -info -in "$KEYSTORE_FILE" -passin "pass:$KEYSTORE_PASSWORD" -noout 2>&1 || true
+
+            echo "=== keytool check with -storetype JKS ==="
+            keytool -list -v -keystore "$KEYSTORE_FILE" -storetype JKS -storepass "$KEYSTORE_PASSWORD" 2>&1 | head -n 30 || true
+
+            echo "=== keytool check with -storetype PKCS12 ==="
+            keytool -list -v -keystore "$KEYSTORE_FILE" -storetype PKCS12 -storepass "$KEYSTORE_PASSWORD" 2>&1 | head -n 30 || true
+          } 2>&1 | tee keystore_inspect.log
 
       - name: Diagnose and Resolve Keystore Credentials
         if: env.HAS_KEYSTORE == 'true'
@@ -133,7 +172,7 @@ jobs:
         run: |
           LOG_FILE="failure_log.txt"
           echo "=== Build Failure Diagnostic ===" > "$LOG_FILE"
-          for f in keystore_doctor.log build_release_log.txt build_debug_log.txt; do
+          for f in keystore_decode.log keystore_inspect.log keystore_doctor.log build_release_log.txt build_debug_log.txt; do
             if [ -f "$f" ]; then
               echo "--- Log: $f ---" >> "$LOG_FILE"
               tail -n 60 "$f" >> "$LOG_FILE"
@@ -142,7 +181,7 @@ jobs:
           done
           gh issue create --title "Build Diagnostic #${{ github.run_number }}" --body "Automated build failure log:
           \`\`\`
-          $(cat "$LOG_FILE" | head -n 120)
+          $(cat "$LOG_FILE" | head -n 140)
           \`\`\`" || true
 
       - name: Clean Up Keystore

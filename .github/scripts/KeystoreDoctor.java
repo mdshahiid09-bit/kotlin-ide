@@ -24,19 +24,23 @@ public class KeystoreDoctor {
         System.out.println("Keystore file: " + ksFile.getAbsolutePath() + " (size: " + ksFile.length() + " bytes)");
         System.out.println("Target alias: '" + alias + "'");
 
-        String[] types = new String[] { KeyStore.getDefaultType(), "JKS", "PKCS12" };
+        String[] types = new String[] { "PKCS12", "JKS", KeyStore.getDefaultType() };
         KeyStore ks = null;
         String workingType = null;
         String workingStorePass = null;
 
         List<String> storePassCandidates = new ArrayList<>();
         storePassCandidates.add(storePass);
+        if (!storePassCandidates.contains(keyPass)) {
+            storePassCandidates.add(keyPass);
+        }
         if (storePass.startsWith("\"") && storePass.endsWith("\"")) {
             storePassCandidates.add(storePass.substring(1, storePass.length() - 1));
         }
-        if (storePass.startsWith("'") && storePass.endsWith("'")) {
-            storePassCandidates.add(storePass.substring(1, storePass.length() - 1));
+        if (keyPass.startsWith("\"") && keyPass.endsWith("\"")) {
+            storePassCandidates.add(keyPass.substring(1, keyPass.length() - 1));
         }
+        storePassCandidates.add("");
 
         for (String type : types) {
             for (String sp : storePassCandidates) {
@@ -47,18 +51,21 @@ public class KeystoreDoctor {
                         ks = testKs;
                         workingType = type;
                         workingStorePass = sp;
-                        System.out.println("SUCCESS: Loaded keystore with type: " + type);
+                        System.out.println("SUCCESS: Loaded keystore with type: " + type + " (pass candidate index: " + storePassCandidates.indexOf(sp) + ")");
                         break;
                     }
                 } catch (Exception e) {
-                    System.out.println("Type " + type + " failed: " + e.getMessage());
+                    System.out.println("Type " + type + " failed: " + e.getClass().getName() + " - " + e.getMessage());
+                    if (e.getCause() != null) {
+                        System.out.println("  Cause: " + e.getCause().getClass().getName() + " - " + e.getCause().getMessage());
+                    }
                 }
             }
             if (ks != null) break;
         }
 
         if (ks == null) {
-            System.err.println("FATAL: Could not unlock keystore with store password candidates.");
+            System.err.println("FATAL: Could not unlock keystore with any candidate password.");
             System.exit(1);
         }
 
@@ -86,17 +93,17 @@ public class KeystoreDoctor {
             }
             if (!foundAliases.contains(resolvedAlias) && !foundAliases.isEmpty()) {
                 resolvedAlias = foundAliases.get(0);
-                System.out.println("Falling back to first key alias: '" + resolvedAlias + "'");
+                System.out.println("Falling back to first available alias: '" + resolvedAlias + "'");
             }
         }
 
         List<String> keyPassCandidates = new ArrayList<>();
         keyPassCandidates.add(keyPass);
-        if (keyPass.startsWith("\"") && keyPass.endsWith("\"")) {
-            keyPassCandidates.add(keyPass.substring(1, keyPass.length() - 1));
-        }
         if (!keyPassCandidates.contains(workingStorePass)) {
             keyPassCandidates.add(workingStorePass);
+        }
+        if (keyPass.startsWith("\"") && keyPass.endsWith("\"")) {
+            keyPassCandidates.add(keyPass.substring(1, keyPass.length() - 1));
         }
 
         String resolvedKeyPass = null;
@@ -109,7 +116,10 @@ public class KeystoreDoctor {
                     break;
                 }
             } catch (Exception e) {
-                System.out.println("Key password attempt failed: " + e.getClass().getSimpleName() + " - " + e.getMessage());
+                System.out.println("Key password candidate failed: " + e.getClass().getName() + " - " + e.getMessage());
+                if (e.getCause() != null) {
+                    System.out.println("  Cause: " + e.getCause().getClass().getName() + " - " + e.getCause().getMessage());
+                }
             }
         }
 
