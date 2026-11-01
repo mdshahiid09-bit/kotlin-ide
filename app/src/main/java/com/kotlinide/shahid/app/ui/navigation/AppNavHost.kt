@@ -8,7 +8,9 @@ import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
 import com.kotlinide.shahid.app.data.security.TokenStorage
 import com.kotlinide.shahid.app.data.storage.AppPreferences
+import com.kotlinide.shahid.app.data.storage.DraftStorage
 import com.kotlinide.shahid.app.data.storage.ProjectStorage
+import com.kotlinide.shahid.app.data.sync.SyncQueueManager
 import com.kotlinide.shahid.app.ui.screens.build.BuildHistoryScreen
 import com.kotlinide.shahid.app.ui.screens.editor.EditorScreen
 import com.kotlinide.shahid.app.ui.screens.guide.FirstRunGuideScreen
@@ -16,6 +18,7 @@ import com.kotlinide.shahid.app.ui.screens.login.LoginScreen
 import com.kotlinide.shahid.app.ui.screens.notes.NotesScreen
 import com.kotlinide.shahid.app.ui.screens.projects.ProjectListScreen
 import com.kotlinide.shahid.app.ui.screens.projects.wizard.NewProjectWizardScreen
+import com.kotlinide.shahid.app.ui.screens.settings.CrashLogScreen
 import com.kotlinide.shahid.app.ui.screens.settings.SettingsScreen
 
 @Composable
@@ -24,6 +27,8 @@ fun AppNavHost(
     tokenStorage: TokenStorage,
     appPreferences: AppPreferences,
     projectStorage: ProjectStorage,
+    draftStorage: DraftStorage,
+    syncQueueManager: SyncQueueManager,
     onThemeToggle: (Boolean) -> Unit
 ) {
     val startDestination = when {
@@ -102,6 +107,8 @@ fun AppNavHost(
                 projectId = projectId,
                 projectStorage = projectStorage,
                 tokenStorage = tokenStorage,
+                draftStorage = draftStorage,
+                syncQueueManager = syncQueueManager,
                 onBack = { navController.popBackStack() },
                 onOpenBuildHistory = { pId ->
                     navController.navigate(Screen.BuildHistory.createRoute(pId))
@@ -144,7 +151,16 @@ fun AppNavHost(
                         popUpTo(Screen.ProjectList.route) { inclusive = true }
                     }
                 },
-                onThemeToggle = onThemeToggle
+                onThemeToggle = onThemeToggle,
+                onOpenCrashLog = {
+                    navController.navigate(Screen.CrashLog.route)
+                }
+            )
+        }
+
+        composable(Screen.CrashLog.route) {
+            CrashLogScreen(
+                onBack = { navController.popBackStack() }
             )
         }
     }
