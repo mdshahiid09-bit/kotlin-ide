@@ -93,7 +93,7 @@ fun LoginScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(20.dp))
 
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
@@ -107,14 +107,14 @@ fun LoginScreen(
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "• repo (Full repository control)\n• workflow (Manage GitHub Actions workflows)",
-                        style = MaterialTheme.typography.bodyMedium,
+                        text = "• Classic PAT (ghp_...):\n   - repo (Full control of private repositories)\n   - workflow (Manage GitHub Actions)\n\n• Fine-grained PAT (github_pat_...):\n   - Repository access: 'All repositories'\n   - Administration: Read and write\n   - Contents: Read and write\n   - Workflows: Read and write",
+                        style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(18.dp))
 
             OutlinedTextField(
                 value = tokenInput,
@@ -123,7 +123,7 @@ fun LoginScreen(
                     errorMessage = null
                 },
                 label = { Text("Personal Access Token (PAT)") },
-                placeholder = { Text("ghp_...") },
+                placeholder = { Text("ghp_... or github_pat_...") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
                 isError = errorMessage != null
@@ -138,7 +138,7 @@ fun LoginScreen(
                 )
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(22.dp))
 
             Button(
                 onClick = {
@@ -148,10 +148,10 @@ fun LoginScreen(
                         errorMessage = null
                         tokenStorage.saveToken(cleanToken)
                         coroutineScope.launch {
-                            val res = apiService.validateToken()
+                            val res = apiService.validateTokenDetails()
                             isLoading = false
-                            res.onSuccess { user ->
-                                appPreferences.githubUsername = user.login
+                            res.onSuccess { info ->
+                                appPreferences.githubUsername = info.user.login
                                 onLoginSuccess()
                             }.onFailure { err ->
                                 tokenStorage.clearToken()

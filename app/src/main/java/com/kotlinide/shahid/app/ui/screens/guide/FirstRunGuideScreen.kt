@@ -133,11 +133,11 @@ fun FirstRunGuideScreen(
                                 validationError = null
                                 tokenStorage.saveToken(cleanToken)
                                 coroutineScope.launch {
-                                    val result = apiService.validateToken()
+                                    val result = apiService.validateTokenDetails()
                                     isValidating = false
-                                    result.onSuccess { user ->
-                                        appPreferences.githubUsername = user.login
-                                        validationSuccess = "Connected as @${user.login}"
+                                    result.onSuccess { info ->
+                                        appPreferences.githubUsername = info.user.login
+                                        validationSuccess = "Connected as @${info.user.login}"
                                         currentStep = 2
                                     }.onFailure { err ->
                                         validationError = if (err is GitHubApiException) {
@@ -205,13 +205,13 @@ fun FirstRunGuideScreen(
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
                             Text(
-                                text = "How to generate a Personal Access Token:",
+                                text = "Token Permissions Guidance:",
                                 fontWeight = FontWeight.SemiBold,
                                 style = MaterialTheme.typography.bodyMedium
                             )
                             Spacer(modifier = Modifier.height(6.dp))
                             Text(
-                                text = "1. Visit github.com/settings/tokens (classic)\n2. Generate new token\n3. Select scopes: 'repo' (Full control) and 'workflow'\n4. Copy and paste it below",
+                                text = "• Classic PAT (ghp_...):\n   Scopes: 'repo' (Full control) and 'workflow'\n\n• Fine-grained PAT (github_pat_...):\n   Repository access: 'All repositories'\n   Permissions: Administration (Read/Write), Contents (Read/Write), Workflows (Read/Write)",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -227,7 +227,7 @@ fun FirstRunGuideScreen(
                             validationError = null
                         },
                         label = { Text("GitHub Personal Access Token") },
-                        placeholder = { Text("ghp_xxxxxxxxxxxxxxxxxxxx") },
+                        placeholder = { Text("ghp_... or github_pat_...") },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                         isError = validationError != null

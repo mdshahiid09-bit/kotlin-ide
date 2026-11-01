@@ -27,14 +27,18 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CropSquare
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.ViewQuilt
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -54,6 +58,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -73,6 +78,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.kotlinide.shahid.app.data.api.GitHubApiException
 import com.kotlinide.shahid.app.data.api.GitHubApiService
+import com.kotlinide.shahid.app.data.api.TokenType
+import com.kotlinide.shahid.app.data.api.TokenValidationInfo
 import com.kotlinide.shahid.app.data.model.Project
 import com.kotlinide.shahid.app.data.model.ProjectTemplate
 import com.kotlinide.shahid.app.data.security.TokenStorage
@@ -82,6 +89,7 @@ import com.kotlinide.shahid.app.data.templates.TemplateProvider
 import com.kotlinide.shahid.app.ui.theme.DarkBackground
 import com.kotlinide.shahid.app.ui.theme.DarkSurface
 import com.kotlinide.shahid.app.ui.theme.NeonGreen
+import com.kotlinide.shahid.app.ui.theme.OrangeWarning
 import com.kotlinide.shahid.app.util.IconGenerator
 import kotlinx.coroutines.launch
 import java.io.File
@@ -102,6 +110,7 @@ fun NewProjectWizardScreen(
 
     var step by remember { mutableIntStateOf(1) }
 
+    // Preserved form data
     var appName by remember { mutableStateOf("MyAwesomeApp") }
     var packageName by remember { mutableStateOf("com.example.myawesomeapp") }
     var versionName by remember { mutableStateOf("1.0.0") }
@@ -116,11 +125,40 @@ fun NewProjectWizardScreen(
     var iconUri by remember { mutableStateOf<Uri?>(null) }
     var iconBitmap by remember { mutableStateOf<Bitmap?>(null) }
 
+    // Token Validation & Checker state
+    var tokenInfo by remember { mutableStateOf<TokenValidationInfo?>(null) }
+    var isTestingToken by remember { mutableStateOf(false) }
+    var tokenTestError by remember { mutableStateOf<String?>(null) }
+
+    // Repository Creation state
     var isCreating by remember { mutableStateOf(false) }
     var statusText by remember { mutableStateOf("") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var errorRawDetails by remember { mutableStateOf<String?>(null) }
     var isDetailsExpanded by remember { mutableStateOf(false) }
+
+    fun testTokenPermissions() {
+        isTestingToken = true
+        tokenTestError = null
+        coroutineScope.launch {
+            val res = apiService.validateTokenDetails()
+            isTestingToken = false
+            res.onSuccess { info ->
+                tokenInfo = info
+                appPreferences.githubUsername = info.user.login
+            }.onFailure { err ->
+                tokenTestError = if (err is GitHubApiException) {
+                    err.userFriendlyMessage
+                } else {
+                    err.message ?: "Token verification failed"
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        testTokenPermissions()
+    }
 
     val imagePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -139,6 +177,106 @@ fun NewProjectWizardScreen(
             } catch (e: Exception) {
                 Toast.makeText(context, "Failed to load image: ${e.message}", Toast.LENGTH_SHORT).show()
             }
+        }
+    }
+
+    fun executeRepositoryCreation() {
+        isCreating = true
+        errorMessage = null
+        errorRawDetails = null
+        isDetailsExpanded = false
+        statusText = "Verifying GitHub credentials & permissions..."
+        val vCode = versionCodeInput.toIntOrNull() ?: 1
+        val projectId = UUID.randomUUID().toString()
+        val cleanRepoName = appName.replace(Regex("[^a-zA-Z0-9_-]"), "-")
+
+        coroutineScope.launch {
+            val repoRes = apiService.createRepository(
+                name = cleanRepoName,
+                description = "$appName - Android application project",
+                isPrivate = isPrivateRepo
+            )
+
+            if (repoRes.isFailure) {
+                isCreating = false
+                val ex = repoRes.exceptionOrNull()
+                if (ex is GitHubApiException) {
+                    errorMessage = ex.userFriendlyMessage
+                    errorRawDetails = ex.rawResponse
+                } else {
+                    errorMessage = ex?.message ?: "Failed to create GitHub repository"
+                    errorRawDetails = null
+                }
+                return@launch
+            }
+
+            val repo = repoRes.getOrThrow()
+            statusText = "Pushing project template files to GitHub..."
+
+            val files = TemplateProvider.generateProjectFiles(
+                appName = appName,
+                packageName = packageName,
+                versionName = versionName,
+                versionCode = vCode,
+                templateId = selectedTemplateId,
+                minSdk = minSdk,
+                targetSdk = targetSdk,
+                hasCustomIcon = (iconBitmap != null)
+            )
+
+            val mipmapFiles = IconGenerator.generateMipmapIcons(iconBitmap)
+
+            val projectDir = projectStorage.getProjectDirectory(projectId)
+            files.forEach { (relPath, content) ->
+                val f = File(projectDir, relPath)
+                f.parentFile?.mkdirs()
+                f.writeText(content)
+            }
+            mipmapFiles.forEach { (relPath, bytes) ->
+                val f = File(projectDir, relPath)
+                f.parentFile?.mkdirs()
+                f.writeBytes(bytes)
+            }
+
+            for ((relPath, content) in files) {
+                apiService.createOrUpdateFile(
+                    owner = repo.owner.login,
+                    repo = repo.name,
+                    path = relPath,
+                    contentString = content,
+                    message = "Add $relPath"
+                )
+            }
+
+            for ((relPath, bytes) in mipmapFiles) {
+                apiService.createOrUpdateBinaryFile(
+                    owner = repo.owner.login,
+                    repo = repo.name,
+                    path = relPath,
+                    bytes = bytes,
+                    message = "Add $relPath"
+                )
+            }
+
+            val newProject = Project(
+                id = projectId,
+                name = appName,
+                packageName = packageName,
+                versionName = versionName,
+                versionCode = vCode,
+                templateId = selectedTemplateId,
+                minSdk = minSdk,
+                targetSdk = targetSdk,
+                repoName = repo.name,
+                repoOwner = repo.owner.login,
+                repoUrl = repo.htmlUrl,
+                isPrivate = isPrivateRepo
+            )
+            projectStorage.saveProject(newProject)
+
+            isCreating = false
+            Toast.makeText(context, "Repository & Project Created Successfully!", Toast.LENGTH_SHORT).show()
+            onProjectCreated(projectId)
         }
     }
 
@@ -181,103 +319,7 @@ fun NewProjectWizardScreen(
                             if (step < 3) {
                                 step++
                             } else {
-                                isCreating = true
-                                errorMessage = null
-                                errorRawDetails = null
-                                isDetailsExpanded = false
-                                statusText = "Verifying GitHub credentials..."
-                                val vCode = versionCodeInput.toIntOrNull() ?: 1
-                                val projectId = UUID.randomUUID().toString()
-                                val cleanRepoName = appName.replace(Regex("[^a-zA-Z0-9_-]"), "-")
-
-                                coroutineScope.launch {
-                                    val repoRes = apiService.createRepository(
-                                        name = cleanRepoName,
-                                        description = "$appName - Built with Kotlin IDE on Android",
-                                        isPrivate = isPrivateRepo
-                                    )
-
-                                    if (repoRes.isFailure) {
-                                        isCreating = false
-                                        val ex = repoRes.exceptionOrNull()
-                                        if (ex is GitHubApiException) {
-                                            errorMessage = ex.userFriendlyMessage
-                                            errorRawDetails = ex.rawResponse
-                                        } else {
-                                            errorMessage = ex?.message ?: "Failed to create GitHub repository"
-                                            errorRawDetails = null
-                                        }
-                                        return@launch
-                                    }
-
-                                    val repo = repoRes.getOrThrow()
-                                    statusText = "Pushing project template files to GitHub..."
-
-                                    val files = TemplateProvider.generateProjectFiles(
-                                        appName = appName,
-                                        packageName = packageName,
-                                        versionName = versionName,
-                                        versionCode = vCode,
-                                        templateId = selectedTemplateId,
-                                        minSdk = minSdk,
-                                        targetSdk = targetSdk,
-                                        hasCustomIcon = (iconBitmap != null)
-                                    )
-
-                                    val mipmapFiles = IconGenerator.generateMipmapIcons(iconBitmap)
-
-                                    val projectDir = projectStorage.getProjectDirectory(projectId)
-                                    files.forEach { (relPath, content) ->
-                                        val f = File(projectDir, relPath)
-                                        f.parentFile?.mkdirs()
-                                        f.writeText(content)
-                                    }
-                                    mipmapFiles.forEach { (relPath, bytes) ->
-                                        val f = File(projectDir, relPath)
-                                        f.parentFile?.mkdirs()
-                                        f.writeBytes(bytes)
-                                    }
-
-                                    for ((relPath, content) in files) {
-                                        apiService.createOrUpdateFile(
-                                            owner = repo.owner.login,
-                                            repo = repo.name,
-                                            path = relPath,
-                                            contentString = content,
-                                            message = "Add $relPath"
-                                        )
-                                    }
-
-                                    for ((relPath, bytes) in mipmapFiles) {
-                                        apiService.createOrUpdateBinaryFile(
-                                            owner = repo.owner.login,
-                                            repo = repo.name,
-                                            path = relPath,
-                                            bytes = bytes,
-                                            message = "Add $relPath"
-                                        )
-                                    }
-
-                                    val newProject = Project(
-                                        id = projectId,
-                                        name = appName,
-                                        packageName = packageName,
-                                        versionName = versionName,
-                                        versionCode = vCode,
-                                        templateId = selectedTemplateId,
-                                        minSdk = minSdk,
-                                        targetSdk = targetSdk,
-                                        repoName = repo.name,
-                                        repoOwner = repo.owner.login,
-                                        repoUrl = repo.htmlUrl,
-                                        isPrivate = isPrivateRepo
-                                    )
-                                    projectStorage.saveProject(newProject)
-
-                                    isCreating = false
-                                    Toast.makeText(context, "Project Created!", Toast.LENGTH_SHORT).show()
-                                    onProjectCreated(projectId)
-                                }
+                                executeRepositoryCreation()
                             }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = NeonGreen, contentColor = Color.Black),
@@ -288,7 +330,7 @@ fun NewProjectWizardScreen(
                             Spacer(modifier = Modifier.width(8.dp))
                             Text("Creating...")
                         } else {
-                            Text(if (step == 3) "Create Project" else "Next", fontWeight = FontWeight.Bold)
+                            Text(if (step == 3) "Create Repository & Project" else "Next", fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -433,8 +475,9 @@ fun NewProjectWizardScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
 
-                    Spacer(modifier = Modifier.height(20.dp))
+                    Spacer(modifier = Modifier.height(18.dp))
 
+                    // App Icon Picker
                     Column(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalAlignment = Alignment.CenterHorizontally
@@ -465,7 +508,7 @@ fun NewProjectWizardScreen(
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(14.dp))
+                        Spacer(modifier = Modifier.height(12.dp))
 
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -495,7 +538,7 @@ fun NewProjectWizardScreen(
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(6.dp))
+                        Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = if (iconBitmap != null) "Custom PNG selected" else "Using default developer neon icon",
                             style = MaterialTheme.typography.bodySmall,
@@ -503,21 +546,141 @@ fun NewProjectWizardScreen(
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(20.dp))
+                    Spacer(modifier = Modifier.height(18.dp))
 
+                    // GitHub Token Permission Checker & Account Status Card
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp))
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Default.Security, contentDescription = null, tint = NeonGreen, modifier = Modifier.size(20.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("GitHub Token & Permissions", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
+                                }
+
+                                OutlinedButton(
+                                    onClick = { testTokenPermissions() },
+                                    enabled = !isTestingToken && !isCreating
+                                ) {
+                                    if (isTestingToken) {
+                                        CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp, color = NeonGreen)
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("Testing...", style = MaterialTheme.typography.labelSmall)
+                                    } else {
+                                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(14.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Test Token", style = MaterialTheme.typography.labelSmall)
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            if (tokenInfo != null) {
+                                val info = tokenInfo!!
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Default.AccountCircle, contentDescription = null, tint = NeonGreen, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Authenticated as @${info.user.login}", fontWeight = FontWeight.SemiBold, color = NeonGreen)
+                                }
+
+                                Spacer(modifier = Modifier.height(4.dp))
+
+                                val typeLabel = when (info.tokenType) {
+                                    TokenType.CLASSIC -> "Classic PAT (ghp_...)"
+                                    TokenType.FINE_GRAINED -> "Fine-Grained PAT (github_pat_...)"
+                                    TokenType.UNKNOWN -> "Personal Access Token"
+                                }
+                                Text("Token Type: $typeLabel", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+                                Spacer(modifier = Modifier.height(6.dp))
+
+                                if (info.tokenType == TokenType.CLASSIC) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        val repoOk = info.hasRepoScope
+                                        Icon(
+                                            if (repoOk) Icons.Default.CheckCircle else Icons.Default.Warning,
+                                            contentDescription = null,
+                                            tint = if (repoOk) NeonGreen else OrangeWarning,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = if (repoOk) "Scope 'repo' detected (Full control)" else "Missing 'repo' scope! (Required for private repos)",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = if (repoOk) MaterialTheme.colorScheme.onSurface else OrangeWarning
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        val wfOk = info.hasWorkflowScope
+                                        Icon(
+                                            if (wfOk) Icons.Default.CheckCircle else Icons.Default.Warning,
+                                            contentDescription = null,
+                                            tint = if (wfOk) NeonGreen else OrangeWarning,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = if (wfOk) "Scope 'workflow' detected (GitHub Actions)" else "Missing 'workflow' scope (Recommended for CI/CD)",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = if (wfOk) MaterialTheme.colorScheme.onSurface else OrangeWarning
+                                        )
+                                    }
+                                } else if (info.tokenType == TokenType.FINE_GRAINED) {
+                                    Card(
+                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                                        shape = RoundedCornerShape(8.dp)
+                                    ) {
+                                        Column(modifier = Modifier.padding(10.dp)) {
+                                            Text(
+                                                text = "Fine-grained Token Requirements:",
+                                                fontWeight = FontWeight.SemiBold,
+                                                style = MaterialTheme.typography.labelSmall
+                                            )
+                                            Spacer(modifier = Modifier.height(2.dp))
+                                            Text(
+                                                text = "• Repository access: 'All repositories' (Required to create new repos)\n• Administration: Read and write\n• Contents: Read and write\n• Workflows: Read and write",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                }
+                            } else if (tokenTestError != null) {
+                                Text(tokenTestError!!, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                            } else {
+                                Text("Testing token permissions...", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // Project Summary Card
                     Card(
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
                         shape = RoundedCornerShape(12.dp)
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
-                            Text("Project Summary:", fontWeight = FontWeight.Bold)
+                            Text("Project Configuration Summary:", fontWeight = FontWeight.Bold)
                             Spacer(modifier = Modifier.height(6.dp))
-                            Text("• Name: $appName\n• Package: $packageName\n• Version: $versionName ($versionCodeInput)\n• Visibility: ${if (isPrivateRepo) "Private" else "Public"}\n• Icon: ${if (iconBitmap != null) "Custom PNG (Auto-Mipmaps)" else "Default Adaptive"}\n• Cloud CI/CD: Automated GitHub Actions workflow")
+                            Text("• Name: $appName\n• Package: $packageName\n• Version: $versionName ($versionCodeInput)\n• Visibility: ${if (isPrivateRepo) "Private" else "Public"}\n• Icon: ${if (iconBitmap != null) "Custom PNG (Mipmaps Generated)" else "Default Adaptive Icon"}\n• Cloud Build: Automated GitHub Actions workflow")
                         }
                     }
 
                     if (isCreating) {
-                        Spacer(modifier = Modifier.height(20.dp))
+                        Spacer(modifier = Modifier.height(18.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = NeonGreen)
                             Spacer(modifier = Modifier.width(10.dp))
@@ -525,6 +688,7 @@ fun NewProjectWizardScreen(
                         }
                     }
 
+                    // Error Display with Details & Retry Button
                     if (errorMessage != null) {
                         Spacer(modifier = Modifier.height(16.dp))
                         Card(
@@ -535,20 +699,22 @@ fun NewProjectWizardScreen(
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Column(modifier = Modifier.padding(14.dp)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                Row(verticalAlignment = Alignment.Top) {
                                     Icon(
                                         Icons.Default.ErrorOutline,
                                         contentDescription = null,
                                         tint = MaterialTheme.colorScheme.error,
-                                        modifier = Modifier.size(20.dp)
+                                        modifier = Modifier.size(22.dp)
                                     )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(
-                                        text = errorMessage!!,
-                                        color = MaterialTheme.colorScheme.error,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = errorMessage!!,
+                                            color = MaterialTheme.colorScheme.error,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    }
                                 }
 
                                 if (!errorRawDetails.isNullOrBlank()) {
@@ -581,6 +747,23 @@ fun NewProjectWizardScreen(
                                                 style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
                                             )
                                         }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(12.dp))
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.End
+                                ) {
+                                    Button(
+                                        onClick = { executeRepositoryCreation() },
+                                        colors = ButtonDefaults.buttonColors(containerColor = NeonGreen, contentColor = Color.Black),
+                                        enabled = !isCreating
+                                    ) {
+                                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("Retry", fontWeight = FontWeight.Bold)
                                     }
                                 }
                             }

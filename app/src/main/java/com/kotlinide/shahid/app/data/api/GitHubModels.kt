@@ -3,11 +3,42 @@ package com.kotlinide.shahid.app.data.api
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
+enum class TokenType {
+    CLASSIC,
+    FINE_GRAINED,
+    UNKNOWN
+}
+
+data class TokenValidationInfo(
+    val user: GitHubUser,
+    val tokenType: TokenType,
+    val scopes: List<String> = emptyList(),
+    val hasRepoScope: Boolean = false,
+    val hasWorkflowScope: Boolean = false,
+    val expirationDate: String? = null
+)
+
 class GitHubApiException(
     val statusCode: Int,
     val userFriendlyMessage: String,
-    val rawResponse: String? = null
+    val rawResponse: String? = null,
+    val gitHubErrorMessage: String? = null
 ) : Exception(userFriendlyMessage)
+
+@Serializable
+data class GitHubErrorResponse(
+    val message: String = "",
+    val errors: List<GitHubErrorItem> = emptyList(),
+    @SerialName("documentation_url") val documentationUrl: String = ""
+)
+
+@Serializable
+data class GitHubErrorItem(
+    val resource: String = "",
+    val field: String = "",
+    val code: String = "",
+    val message: String = ""
+)
 
 @Serializable
 data class GitHubUser(
@@ -24,7 +55,7 @@ data class CreateRepoRequest(
     val name: String,
     val description: String = "",
     val private: Boolean = true,
-    @SerialName("auto_init") val autoInit: Boolean = false
+    @SerialName("auto_init") val autoInit: Boolean = true
 )
 
 @Serializable
