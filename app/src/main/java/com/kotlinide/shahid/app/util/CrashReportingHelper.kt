@@ -36,7 +36,7 @@ object CrashReportingHelper {
     private var appContext: Context? = null
     private var preferences: AppPreferences? = null
 
-    fun init(context: Context, appPreferences: AppPreferences) {
+    fun init(context: Context, appPreferences: AppPreferences? = null) {
         appContext = context.applicationContext
         preferences = appPreferences
 
@@ -50,7 +50,9 @@ object CrashReportingHelper {
                     throwable = throwable,
                     isFatal = true
                 )
-            } catch (t: Throwable) {}
+            } catch (t: Throwable) {
+                // Protect against recursive crash
+            }
 
             defaultHandler?.uncaughtException(thread, throwable)
         }
@@ -73,12 +75,12 @@ object CrashReportingHelper {
             val sw = StringWriter()
             throwable?.printStackTrace(PrintWriter(sw))
             val rawTrace = sw.toString().ifBlank { message }
-            val sanitized = sanitize(rawTrace)
+            val sanitizedTrace = sanitize(rawTrace)
 
             val entry = CrashLogEntry(
                 tag = tag,
                 message = sanitize(message),
-                stackTrace = sanitized,
+                stackTrace = sanitizedTrace,
                 isFatal = isFatal
             )
 
@@ -124,12 +126,22 @@ object CrashReportingHelper {
 
     fun sanitize(input: String): String {
         var clean = input
-        clean = clean.replace(Regex("ghp_[a-zA-Z0-9]{30,}"), "[REDACTED_PAT_TOKEN]")
-        clean = clean.replace(Regex("github_pat_[a-zA-Z0-9_]{30,}"), "[REDACTED_PAT_TOKEN]")
+        // Redact GitHub Classic PAT
+        clean = clean.replace(Regex("ghp_[a-zA-Z0-9]{20,}"), "[REDACTED_PAT_TOKEN]")
+        // Redact GitHub Fine-grained PAT
+        clean = clean.replace(Regex("github_pat_[a-zA-Z0-9_]{20,}"), "[REDACTED_PAT_TOKEN]")
+        // Redact Authorization headers and Bearer tokens
+        clean = clean.replace(Regex("(?i)authorization:\\s*Bearer\\s+[a-zA-Z0-9_.-]+"), "Authorization: Bearer [REDACTED]")
+        clean = clean.replace(Regex("(?i)authorization:\\s*token\\s+[a-zA-Z0-9_.-]+"), "Authorization: token [REDACTED]")
         clean = clean.replace(Regex("Bearer\\s+[a-zA-Z0-9_.-]+"), "Bearer [REDACTED]")
+        // Redact passwords and keystore credentials
         clean = clean.replace(Regex("(?i)password[=:]\\s*['\"]?[^\\s'\"]+"), "password=[REDACTED]")
-        clean = clean.replace(Regex("(?i)keystore[=:]\\s*['\"]?[^\\s'\"]+"), "keystore=[REDACTED]")
         clean = clean.replace(Regex("(?i)keypass[=:]\\s*['\"]?[^\\s'\"]+"), "keypass=[REDACTED]")
+        clean = clean.replace(Regex("(?i)storepass[=:]\\s*['\"]?[^\\s'\"]+"), "storepass=[REDACTED]")
+        clean = clean.replace(Regex("(?i)keystore[=:]\\s*['\"]?[^\\s'\"]+"), "keystore=[REDACTED]")
+        clean = clean.replace(Regex("(?i)alias[=:]\\s*['\"]?[^\\s'\"]+"), "alias=[REDACTED]")
+        // Redact URL parameters containing sensitive tokens
+        clean = clean.replace(Regex("(?i)(access_token|client_secret|token)=[^&\\s]+"), "$1=[REDACTED]")
         return clean
     }
 }

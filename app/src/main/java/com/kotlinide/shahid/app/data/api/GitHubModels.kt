@@ -15,7 +15,8 @@ data class TokenValidationInfo(
     val scopes: List<String> = emptyList(),
     val hasRepoScope: Boolean = false,
     val hasWorkflowScope: Boolean = false,
-    val expirationDate: String? = null
+    val scopeWarning: String? = null,
+    val canCreateRepositories: Boolean? = null
 )
 
 class GitHubApiException(
@@ -51,6 +52,24 @@ data class GitHubUser(
 )
 
 @Serializable
+data class DeviceCodeResponse(
+    @SerialName("device_code") val deviceCode: String,
+    @SerialName("user_code") val userCode: String,
+    @SerialName("verification_uri") val verificationUri: String,
+    @SerialName("expires_in") val expiresIn: Int = 900,
+    val interval: Int = 5
+)
+
+@Serializable
+data class OAuthAccessTokenResponse(
+    @SerialName("access_token") val accessToken: String? = null,
+    @SerialName("token_type") val tokenType: String? = null,
+    val scope: String? = null,
+    val error: String? = null,
+    @SerialName("error_description") val errorDescription: String? = null
+)
+
+@Serializable
 data class CreateRepoRequest(
     val name: String,
     val description: String = "",
@@ -67,7 +86,15 @@ data class GitHubRepoResponse(
     @SerialName("html_url") val htmlUrl: String,
     @SerialName("clone_url") val cloneUrl: String = "",
     @SerialName("default_branch") val defaultBranch: String = "main",
-    val owner: GitHubUser
+    val owner: GitHubUser,
+    val permissions: GitHubPermissions? = null
+)
+
+@Serializable
+data class GitHubPermissions(
+    val admin: Boolean = false,
+    val push: Boolean = false,
+    val pull: Boolean = true
 )
 
 @Serializable
@@ -151,6 +178,58 @@ data class CreateGitRefRequest(
 )
 
 @Serializable
+data class GitHubMergeRequest(
+    val base: String,
+    val head: String,
+    @SerialName("commit_message") val commitMessage: String? = null
+)
+
+@Serializable
+data class GitHubMergeResult(
+    val sha: String = "",
+    val message: String = ""
+)
+
+@Serializable
+data class GitHubPullRequest(
+    val id: Long,
+    val number: Int,
+    val title: String,
+    val state: String = "open",
+    val body: String? = null,
+    @SerialName("html_url") val htmlUrl: String = "",
+    val user: GitHubUser? = null,
+    @SerialName("created_at") val createdAt: String = ""
+)
+
+@Serializable
+data class CreatePullRequestRequest(
+    val title: String,
+    val head: String,
+    val base: String,
+    val body: String? = null
+)
+
+@Serializable
+data class GitHubIssue(
+    val id: Long,
+    val number: Int,
+    val title: String,
+    val state: String = "open",
+    val body: String? = null,
+    @SerialName("html_url") val htmlUrl: String = "",
+    val user: GitHubUser? = null,
+    @SerialName("created_at") val createdAt: String = "",
+    val comments: Int = 0
+)
+
+@Serializable
+data class CreateIssueRequest(
+    val title: String,
+    val body: String? = null
+)
+
+@Serializable
 data class WorkflowDispatchRequest(
     val ref: String = "main",
     val inputs: Map<String, String> = emptyMap()
@@ -172,6 +251,30 @@ data class WorkflowRun(
     @SerialName("html_url") val htmlUrl: String = "",
     @SerialName("created_at") val createdAt: String = "",
     @SerialName("updated_at") val updatedAt: String = ""
+)
+
+@Serializable
+data class WorkflowJobsResponse(
+    @SerialName("total_count") val totalCount: Int = 0,
+    val jobs: List<WorkflowJob> = emptyList()
+)
+
+@Serializable
+data class WorkflowJob(
+    val id: Long,
+    @SerialName("run_id") val runId: Long,
+    val name: String,
+    val status: String,
+    val conclusion: String? = null,
+    val steps: List<WorkflowJobStep> = emptyList()
+)
+
+@Serializable
+data class WorkflowJobStep(
+    val name: String,
+    val status: String,
+    val conclusion: String? = null,
+    val number: Int
 )
 
 @Serializable

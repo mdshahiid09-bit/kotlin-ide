@@ -2,19 +2,22 @@ package com.kotlinide.shahid.app.data.keystore
 
 import android.content.Context
 import android.util.Base64
+import com.kotlinide.shahid.app.util.CrashReportingHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.math.BigInteger
+import java.security.KeyPair
 import java.security.KeyPairGenerator
 import java.security.KeyStore
 import java.security.SecureRandom
 import java.security.cert.Certificate
+import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
 import java.util.Date
-import javax.security.auth.x500.X500Principal
 
 data class GeneratedKeystore(
     val base64Content: String,
@@ -44,7 +47,7 @@ class KeystoreManager(private val context: Context) {
             val cleanName = projectName.replace(Regex("[^a-zA-Z0-9_-]"), "_")
             val backupFile = File(backupDir, "${cleanName}_upload_keystore.jks")
 
-            val cert = createSelfSignedCert(keyPair.public, keyPair.private, dName)
+            val cert = createSelfSignedCert(keyPair, dName)
             val certChain = arrayOf<Certificate>(cert)
 
             keyStore.setKeyEntry(
@@ -73,44 +76,29 @@ class KeystoreManager(private val context: Context) {
                 )
             )
         } catch (e: Exception) {
+            CrashReportingHelper.logHandledException("KeystoreManager", "Failed to generate release keystore", e)
             Result.failure(e)
         }
     }
 
     private fun createSelfSignedCert(
-        publicKey: java.security.PublicKey,
-        privateKey: java.security.PrivateKey,
+        keyPair: KeyPair,
         dName: String
     ): X509Certificate {
-        try {
-            val builderClass = Class.forName("org.bouncycastle.x509.X509V3CertificateGenerator")
-            val generator = builderClass.getDeclaredConstructor().newInstance()
+        val now = System.currentTimeMillis()
+        val notBefore = Date(now - 24 * 60 * 60 * 1000L)
+        val notAfter = Date(now + 10000L * 24 * 60 * 60 * 1000L) // ~27 years
+        val serialNumber = BigInteger.valueOf(now)
 
-            val setSerialNumberMethod = builderClass.getMethod("setSerialNumber", BigInteger::class.java)
-            setSerialNumberMethod.invoke(generator, BigInteger.valueOf(System.currentTimeMillis()))
+        val derBytes = DerX509Generator.generateSelfSignedCert(
+            keyPair = keyPair,
+            dName = dName,
+            serialNumber = serialNumber,
+            notBefore = notBefore,
+            notAfter = notAfter
+        )
 
-            val setIssuerDNMethod = builderClass.getMethod("setIssuerDN", X500Principal::class.java)
-            setIssuerDNMethod.invoke(generator, X500Principal(dName))
-
-            val setNotBeforeMethod = builderClass.getMethod("setNotBefore", Date::class.java)
-            setNotBeforeMethod.invoke(generator, Date(System.currentTimeMillis() - 24 * 60 * 60 * 1000L))
-
-            val setNotAfterMethod = builderClass.getMethod("setNotAfter", Date::class.java)
-            setNotAfterMethod.invoke(generator, Date(System.currentTimeMillis() + 10000L * 24 * 60 * 60 * 1000L))
-
-            val setSubjectDNMethod = builderClass.getMethod("setSubjectDN", X500Principal::class.java)
-            setSubjectDNMethod.invoke(generator, X500Principal(dName))
-
-            val setPublicKeyMethod = builderClass.getMethod("setPublicKey", java.security.PublicKey::class.java)
-            setPublicKeyMethod.invoke(generator, publicKey)
-
-            val setSignatureAlgorithmMethod = builderClass.getMethod("setSignatureAlgorithm", String::class.java)
-            setSignatureAlgorithmMethod.invoke(generator, "SHA256WithRSAEncryption")
-
-            val generateMethod = builderClass.getMethod("generate", java.security.PrivateKey::class.java)
-            return generateMethod.invoke(generator, privateKey) as X509Certificate
-        } catch (e: Exception) {
-            throw IllegalStateException("Failed to construct X509 certificate: ${e.message}", e)
-        }
+        val factory = CertificateFactory.getInstance("X.509")
+        return factory.generateCertificate(ByteArrayInputStream(derBytes)) as X509Certificate
     }
 }

@@ -13,25 +13,18 @@ data class ProjectTemplate(
     companion object {
         val ALL = listOf(
             ProjectTemplate(
-                id = "empty_activity",
-                name = "Empty Activity",
-                description = "Minimal Jetpack Compose screen with Material 3 Theme and simple greeting button.",
+                id = "empty_compose",
+                name = "Empty Compose Activity",
+                description = "Modern Jetpack Compose application with Material 3 Theme and preview support.",
                 iconName = "crop_square",
-                features = listOf("Single Screen", "Material 3", "Clean Architecture")
+                features = listOf("Jetpack Compose", "Material 3", "Kotlin 2.0")
             ),
             ProjectTemplate(
-                id = "bottom_navigation",
-                name = "Bottom Navigation",
-                description = "Modern 3-tab layout (Home, Dashboard, Settings) with Scaffold and NavigationBar.",
+                id = "empty_views",
+                name = "Empty Views Activity",
+                description = "Classic Android Views layout with activity_main.xml, ConstraintLayout, and Material 3 theme.",
                 iconName = "view_quilt",
-                features = listOf("3 Tabs", "Scaffold & TopBar", "Navigation Compose")
-            ),
-            ProjectTemplate(
-                id = "login_home",
-                name = "Login + Home",
-                description = "Full authentication flow with Email/Password validation and interactive Dashboard.",
-                iconName = "lock",
-                features = listOf("Form Validation", "Animated Transitions", "Dashboard UI")
+                features = listOf("XML Layouts", "View Binding", "ConstraintLayout")
             )
         )
     }

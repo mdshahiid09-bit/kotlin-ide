@@ -5,6 +5,8 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
+val ciRunNumber = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
+
 android {
     namespace = "com.kotlinide.shahid.app"
     compileSdk = 35
@@ -13,7 +15,7 @@ android {
         applicationId = "com.kotlinide.shahid.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
+        versionCode = ciRunNumber
         versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -36,7 +38,7 @@ android {
     signingConfigs {
         create("release") {
             if (hasReleaseSigning) {
-                storeFile = file(ksFile!!)
+                storeFile = file(ksFile)
                 storePassword = ksPass
                 keyAlias = kAlias
                 keyPassword = kPass
@@ -46,7 +48,8 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -56,7 +59,8 @@ android {
             }
         }
         debug {
-            applicationIdSuffix = ""
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
             isDebuggable = true
         }
     }
@@ -64,8 +68,10 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
+    kotlin {
+        compilerOptions {
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+        }
     }
     buildFeatures {
         compose = true
@@ -91,11 +97,11 @@ dependencies {
     implementation(libs.androidx.material.icons.extended)
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.datastore.preferences)
-    implementation(libs.androidx.security.crypto)
     implementation(libs.okhttp)
     implementation(libs.okhttp.logging)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
 
+    testImplementation(libs.junit)
     debugImplementation(libs.androidx.ui.tooling)
 }
