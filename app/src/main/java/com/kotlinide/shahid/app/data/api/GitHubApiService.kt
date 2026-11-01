@@ -288,6 +288,22 @@ class GitHubApiService(private val tokenStorage: TokenStorage) {
     }
 
     suspend fun createRepository(
+        name: String,
+        description: String? = null,
+        isPrivate: Boolean = true,
+        autoInit: Boolean = false,
+        org: String? = null
+    ): Result<GitHubRepoResponse> = createRepository(
+        request = CreateRepoRequest(
+            name = name,
+            description = description.orEmpty(),
+            private = isPrivate,
+            autoInit = autoInit
+        ),
+        org = org
+    )
+
+    suspend fun createRepository(
         request: CreateRepoRequest,
         org: String? = null
     ): Result<GitHubRepoResponse> = withContext(Dispatchers.IO) {
@@ -363,6 +379,21 @@ class GitHubApiService(private val tokenStorage: TokenStorage) {
         }
     }
 
+    suspend fun getFileContent(
+        owner: String,
+        repo: String,
+        path: String,
+        ref: String = "main"
+    ): Result<String> = withContext(Dispatchers.IO) {
+        getFileDetails(owner, repo, path, ref).mapCatching { details ->
+            if (!details.content.isNullOrBlank()) {
+                decodeBase64(details.content)
+            } else {
+                ""
+            }
+        }
+    }
+
     suspend fun createOrUpdateFile(
         owner: String,
         repo: String,
@@ -399,6 +430,45 @@ class GitHubApiService(private val tokenStorage: TokenStorage) {
             }
         } catch (e: Exception) {
             CrashReportingHelper.logHandledException("GitHubApiService", "createOrUpdateFile failed for $path", e)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun createOrUpdateBinaryFile(
+        owner: String,
+        repo: String,
+        path: String,
+        bytes: ByteArray,
+        message: String,
+        sha: String? = null,
+        branch: String = "main"
+    ): Result<FileContentResponse> = withContext(Dispatchers.IO) {
+        val base64Content = Base64.encodeToString(bytes, Base64.NO_WRAP)
+        val fileReq = FileContentRequest(
+            message = message,
+            content = base64Content,
+            branch = branch,
+            sha = sha
+        )
+        val cleanPath = path.trimStart('/')
+        val url = "https://api.github.com/repos/$owner/$repo/contents/$cleanPath"
+        val bodyString = json.encodeToString(fileReq)
+        val request = newRequestBuilder(url)
+            .put(bodyString.toRequestBody(jsonMediaType))
+            .build()
+
+        try {
+            client.newCall(request).execute().use { response ->
+                val body = response.body?.string().orEmpty()
+                if (response.code == 200 || response.code == 201) {
+                    val fileData = json.decodeFromString<FileContentResponse>(body)
+                    Result.success(fileData)
+                } else {
+                    Result.failure(parseGitHubError(response.code, body))
+                }
+            }
+        } catch (e: Exception) {
+            CrashReportingHelper.logHandledException("GitHubApiService", "createOrUpdateBinaryFile failed for $path", e)
             Result.failure(e)
         }
     }
@@ -460,6 +530,13 @@ class GitHubApiService(private val tokenStorage: TokenStorage) {
         }
     }
 
+    suspend fun getTree(
+        owner: String,
+        repo: String,
+        branch: String = "main",
+        recursive: Boolean = true
+    ): Result<List<GitTreeItem>> = getGitTree(owner, repo, branch, recursive).map { it.tree }
+
     suspend fun getCommitHistory(
         owner: String,
         repo: String,
@@ -482,6 +559,23 @@ class GitHubApiService(private val tokenStorage: TokenStorage) {
         } catch (e: Exception) {
             CrashReportingHelper.logHandledException("GitHubApiService", "getCommitHistory failed", e)
             Result.failure(e)
+        }
+    }
+
+    suspend fun listCommits(
+        owner: String,
+        repo: String,
+        branch: String = "main",
+        limit: Int = 30
+    ): Result<List<GitHubCommitItem>> = getCommitHistory(owner, repo, branch, limit)
+
+    suspend fun getLatestCommitSha(
+        owner: String,
+        repo: String,
+        branch: String = "main"
+    ): Result<String> = withContext(Dispatchers.IO) {
+        getCommitHistory(owner, repo, branch, 1).mapCatching { list ->
+            list.firstOrNull()?.sha ?: throw IllegalStateException("No commits found on branch $branch")
         }
     }
 
