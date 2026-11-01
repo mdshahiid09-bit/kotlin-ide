@@ -29,14 +29,14 @@ class DraftStorage(private val context: Context) {
         try {
             val file = getDraftFile(projectId, relativePath)
             file.writeText(content)
-        } catch (_: Exception) {}
+        } catch (e: Exception) {}
     }
 
     suspend fun getDraft(projectId: String, relativePath: String): String? = withContext(Dispatchers.IO) {
         try {
             val file = getDraftFile(projectId, relativePath)
             if (file.exists() && file.isFile) file.readText() else null
-        } catch (_: Exception) {
+        } catch (e: Exception) {
             null
         }
     }
@@ -45,14 +45,14 @@ class DraftStorage(private val context: Context) {
         try {
             val file = getDraftFile(projectId, relativePath)
             if (file.exists()) file.delete()
-        } catch (_: Exception) {}
+        } catch (e: Exception) {}
     }
 
     suspend fun clearAllDraftsForProject(projectId: String) = withContext(Dispatchers.IO) {
         try {
             val projDir = File(draftsRoot, projectId)
             if (projDir.exists()) projDir.deleteRecursively()
-        } catch (_: Exception) {}
+        } catch (e: Exception) {}
     }
 
     suspend fun hasDraft(projectId: String, relativePath: String): Boolean = withContext(Dispatchers.IO) {
