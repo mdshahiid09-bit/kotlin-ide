@@ -19,11 +19,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.HourglassTop
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -35,6 +37,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -60,6 +63,7 @@ import com.kotlinide.shahid.app.ui.theme.DarkSurface
 import com.kotlinide.shahid.app.ui.theme.NeonGreen
 import com.kotlinide.shahid.app.ui.theme.OrangeWarning
 import com.kotlinide.shahid.app.ui.theme.RedError
+import com.kotlinide.shahid.app.util.ApkInstaller
 import kotlinx.coroutines.launch
 import java.io.File
 import java.text.SimpleDateFormat
@@ -81,6 +85,7 @@ fun BuildHistoryScreen(
     var project by remember { mutableStateOf<Project?>(null) }
     var builds by remember { mutableStateOf<List<BuildInfo>>(emptyList()) }
     var downloadingRunId by remember { mutableStateOf<Long?>(null) }
+    var showPermissionDialog by remember { mutableStateOf(false) }
 
     fun refreshBuilds() {
         coroutineScope.launch {
@@ -193,38 +198,69 @@ fun BuildHistoryScreen(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                                 ) {
-                                    Button(
-                                        onClick = {
-                                            val currentProj = project ?: return@Button
-                                            downloadingRunId = build.id
-                                            coroutineScope.launch {
-                                                val artifactsRes = apiService.listArtifacts(currentProj.repoOwner, currentProj.repoName, build.id)
-                                                val apkArtifact = artifactsRes.getOrNull()?.find { it.name.contains("apk") }
-                                                if (apkArtifact != null) {
-                                                    val appDir = File(context.getExternalFilesDir(null), "Builds/${currentProj.name}").apply { mkdirs() }
-                                                    val destZip = File(appDir, "build_${build.runNumber}_apk.zip")
-                                                    val dlRes = apiService.downloadArtifact(apkArtifact.archiveDownloadUrl, destZip)
-                                                    if (dlRes.isSuccess) {
-                                                        Toast.makeText(context, "Saved to ${destZip.absolutePath}", Toast.LENGTH_LONG).show()
-                                                    } else {
-                                                        Toast.makeText(context, "Failed to download APK artifact", Toast.LENGTH_SHORT).show()
-                                                    }
+                                    val hasLocalApk = !build.apkLocalPath.isNullOrBlank() && File(build.apkLocalPath).exists()
+
+                                    if (hasLocalApk) {
+                                        Button(
+                                            onClick = {
+                                                val apkFile = File(build.apkLocalPath!!)
+                                                if (!ApkInstaller.canInstallApks(context)) {
+                                                    showPermissionDialog = true
                                                 } else {
-                                                    Toast.makeText(context, "No APK artifact found for this run", Toast.LENGTH_SHORT).show()
+                                                    val res = ApkInstaller.installApk(context, apkFile)
+                                                    if (res.isFailure) {
+                                                        Toast.makeText(context, "Install failed: ${res.exceptionOrNull()?.message}", Toast.LENGTH_SHORT).show()
+                                                    }
                                                 }
-                                                downloadingRunId = null
-                                            }
-                                        },
-                                        modifier = Modifier.weight(1f),
-                                        colors = ButtonDefaults.buttonColors(containerColor = NeonGreen, contentColor = Color.Black),
-                                        enabled = downloadingRunId != build.id
-                                    ) {
-                                        if (downloadingRunId == build.id) {
-                                            CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.Black, strokeWidth = 2.dp)
-                                        } else {
-                                            Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                                            },
+                                            modifier = Modifier.weight(1f),
+                                            colors = ButtonDefaults.buttonColors(containerColor = NeonGreen, contentColor = Color.Black)
+                                        ) {
+                                            Icon(Icons.Default.Android, contentDescription = null, modifier = Modifier.size(16.dp))
                                             Spacer(modifier = Modifier.width(6.dp))
-                                            Text("Debug APK", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                            Text("Install APK", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                        }
+                                    } else {
+                                        Button(
+                                            onClick = {
+                                                val currentProj = project ?: return@Button
+                                                downloadingRunId = build.id
+                                                coroutineScope.launch {
+                                                    val artifactsRes = apiService.listArtifacts(currentProj.repoOwner, currentProj.repoName, build.id)
+                                                    val apkArtifact = artifactsRes.getOrNull()?.find { it.name.contains("apk") }
+                                                    if (apkArtifact != null) {
+                                                        val appDir = File(context.getExternalFilesDir(null), "Builds/${currentProj.name}").apply { mkdirs() }
+                                                        val destZip = File(appDir, "build_${build.runNumber}_apk.zip")
+                                                        val dlRes = apiService.downloadArtifact(apkArtifact.archiveDownloadUrl, destZip)
+                                                        if (dlRes.isSuccess) {
+                                                            val extractedApk = ApkInstaller.extractApkFromZip(destZip, appDir)
+                                                            if (extractedApk != null) {
+                                                                projectStorage.saveBuild(build.copy(apkLocalPath = extractedApk.absolutePath))
+                                                                refreshBuilds()
+                                                                Toast.makeText(context, "APK ready to install!", Toast.LENGTH_SHORT).show()
+                                                            } else {
+                                                                Toast.makeText(context, "Saved to ${destZip.absolutePath}", Toast.LENGTH_LONG).show()
+                                                            }
+                                                        } else {
+                                                            Toast.makeText(context, "Failed to download APK artifact", Toast.LENGTH_SHORT).show()
+                                                        }
+                                                    } else {
+                                                        Toast.makeText(context, "No APK artifact found for this run", Toast.LENGTH_SHORT).show()
+                                                    }
+                                                    downloadingRunId = null
+                                                }
+                                            },
+                                            modifier = Modifier.weight(1f),
+                                            colors = ButtonDefaults.buttonColors(containerColor = NeonGreen, contentColor = Color.Black),
+                                            enabled = downloadingRunId != build.id
+                                        ) {
+                                            if (downloadingRunId == build.id) {
+                                                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.Black, strokeWidth = 2.dp)
+                                            } else {
+                                                Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Text("Get APK", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                            }
                                         }
                                     }
 
@@ -265,5 +301,31 @@ fun BuildHistoryScreen(
                 }
             }
         }
+    }
+
+    if (showPermissionDialog) {
+        AlertDialog(
+            onDismissRequest = { showPermissionDialog = false },
+            title = { Text("Permission Required", fontWeight = FontWeight.Bold) },
+            text = {
+                Text("To install built Android apps from Kotlin IDE, Android requires granting permission to install unknown apps. Please allow installation in Android Settings.")
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showPermissionDialog = false
+                        ApkInstaller.openInstallPermissionSettings(context)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = NeonGreen, contentColor = Color.Black)
+                ) {
+                    Text("Open Settings")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPermissionDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 }

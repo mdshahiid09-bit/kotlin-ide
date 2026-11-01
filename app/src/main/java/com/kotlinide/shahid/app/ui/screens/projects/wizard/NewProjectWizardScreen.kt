@@ -1,11 +1,14 @@
 package com.kotlinide.shahid.app.ui.screens.projects.wizard
 
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
+import android.graphics.ImageDecoder
 import android.net.Uri
+import android.os.Build
+import android.provider.MediaStore
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -27,16 +30,14 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.AccountCircle
-import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CropSquare
 import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.ViewQuilt
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
@@ -76,6 +77,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.kotlinide.shahid.app.data.api.GitHubApiException
 import com.kotlinide.shahid.app.data.api.GitHubApiService
 import com.kotlinide.shahid.app.data.api.TokenType
@@ -90,6 +92,7 @@ import com.kotlinide.shahid.app.ui.theme.DarkBackground
 import com.kotlinide.shahid.app.ui.theme.DarkSurface
 import com.kotlinide.shahid.app.ui.theme.NeonGreen
 import com.kotlinide.shahid.app.ui.theme.OrangeWarning
+import com.kotlinide.shahid.app.util.AuditLogger
 import com.kotlinide.shahid.app.util.IconGenerator
 import kotlinx.coroutines.launch
 import java.io.File
@@ -110,77 +113,66 @@ fun NewProjectWizardScreen(
 
     var step by remember { mutableIntStateOf(1) }
 
-    // Preserved form data
-    var appName by remember { mutableStateOf("MyAwesomeApp") }
-    var packageName by remember { mutableStateOf("com.example.myawesomeapp") }
+    // App Information
+    var appName by remember { mutableStateOf("My Application") }
+    var packageName by remember { mutableStateOf("com.example.myapplication") }
     var versionName by remember { mutableStateOf("1.0.0") }
     var versionCodeInput by remember { mutableStateOf("1") }
 
-    var selectedTemplateId by remember { mutableStateOf("empty_activity") }
+    // Template & SDK
+    var selectedTemplateId by remember { mutableStateOf("empty_compose") }
     var minSdk by remember { mutableIntStateOf(26) }
     var targetSdk by remember { mutableIntStateOf(35) }
     var isPrivateRepo by remember { mutableStateOf(true) }
 
-    // Step 3 App Icon state
-    var iconUri by remember { mutableStateOf<Uri?>(null) }
+    // App Icon
     var iconBitmap by remember { mutableStateOf<Bitmap?>(null) }
 
-    // Token Validation & Checker state
-    var tokenInfo by remember { mutableStateOf<TokenValidationInfo?>(null) }
-    var isTestingToken by remember { mutableStateOf(false) }
-    var tokenTestError by remember { mutableStateOf<String?>(null) }
-
-    // Repository Creation state
+    // Status & Error
     var isCreating by remember { mutableStateOf(false) }
     var statusText by remember { mutableStateOf("") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var errorRawDetails by remember { mutableStateOf<String?>(null) }
     var isDetailsExpanded by remember { mutableStateOf(false) }
 
-    fun testTokenPermissions() {
-        isTestingToken = true
-        tokenTestError = null
-        coroutineScope.launch {
-            val res = apiService.validateTokenDetails()
-            isTestingToken = false
-            res.onSuccess { info ->
-                tokenInfo = info
-                appPreferences.githubUsername = info.user.login
-            }.onFailure { err ->
-                tokenTestError = if (err is GitHubApiException) {
-                    err.userFriendlyMessage
-                } else {
-                    err.message ?: "Token verification failed"
-                }
-            }
-        }
-    }
-
-    LaunchedEffect(Unit) {
-        testTokenPermissions()
-    }
+    // Token capability warning
+    var tokenInfo by remember { mutableStateOf<TokenValidationInfo?>(null) }
 
     val imagePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         if (uri != null) {
             try {
-                val inputStream = context.contentResolver.openInputStream(uri)
-                val bitmap = BitmapFactory.decodeStream(inputStream)
-                inputStream?.close()
-                if (bitmap != null) {
-                    iconBitmap = bitmap
-                    iconUri = uri
+                val bitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    ImageDecoder.decodeBitmap(ImageDecoder.createSource(context.contentResolver, uri)) { decoder, _, _ ->
+                        decoder.allocatorSchema = ImageDecoder.ALLOCATOR_SOFTWARE
+                        decoder.isMutableRequired = true
+                    }
                 } else {
-                    Toast.makeText(context, "Could not decode PNG image", Toast.LENGTH_SHORT).show()
+                    @Suppress("DEPRECATION")
+                    MediaStore.Images.Media.getBitmap(context.contentResolver, uri)
                 }
+                iconBitmap = bitmap
+                Toast.makeText(context, "Icon loaded. Mipmap densities will be generated.", Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
-                Toast.makeText(context, "Failed to load image: ${e.message}", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "Failed to load icon: ${e.message}", Toast.LENGTH_SHORT).show()
             }
         }
     }
 
+    LaunchedEffect(Unit) {
+        val testRes = apiService.validateTokenDetails()
+        testRes.onSuccess { info ->
+            tokenInfo = info
+        }
+    }
+
     fun executeRepositoryCreation() {
+        if (appName.isBlank() || packageName.isBlank()) {
+            errorMessage = "App Name and Package Name are required."
+            return
+        }
+
         isCreating = true
         errorMessage = null
         errorRawDetails = null
@@ -274,6 +266,14 @@ fun NewProjectWizardScreen(
             )
             projectStorage.saveProject(newProject)
 
+            AuditLogger.log(
+                context = context,
+                eventType = "PROJECT_CREATED",
+                details = "Created project '$appName' linked to repository ${repo.owner.login}/${repo.name}",
+                projectId = projectId,
+                repoName = repo.name
+            )
+
             isCreating = false
             Toast.makeText(context, "Repository & Project Created Successfully!", Toast.LENGTH_SHORT).show()
             onProjectCreated(projectId)
@@ -283,7 +283,7 @@ fun NewProjectWizardScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("New Compose Project", fontWeight = FontWeight.Bold) },
+                title = { Text("New Android Project", fontWeight = FontWeight.Bold) },
                 navigationIcon = {
                     IconButton(onClick = { if (step > 1) step-- else onBack() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -347,6 +347,25 @@ fun NewProjectWizardScreen(
         ) {
             Spacer(modifier = Modifier.height(12.dp))
 
+            // Token Capability Alert
+            if (tokenInfo?.tokenType == TokenType.FINE_GRAINED) {
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                    colors = CardDefaults.cardColors(containerColor = OrangeWarning.copy(alpha = 0.12f)),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Warning, contentDescription = null, tint = OrangeWarning, modifier = Modifier.size(20.dp))
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            "Fine-grained Personal Access Token detected. Note that GitHub disallows creating personal user repositories via REST API. If creation fails with 403, please switch to a Classic PAT with 'repo' and 'workflow' scopes in Settings.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = OrangeWarning
+                        )
+                    }
+                }
+            }
+
             when (step) {
                 1 -> {
                     Text("1. App Information", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
@@ -406,9 +425,9 @@ fun NewProjectWizardScreen(
                 }
 
                 2 -> {
-                    Text("2. Template & SDK Configuration", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text("2. Template & Architecture", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     Spacer(modifier = Modifier.height(6.dp))
-                    Text("Select a ready Jetpack Compose starter template and target SDK.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Select a ready starter template and repository visibility.", color = MaterialTheme.colorScheme.onSurfaceVariant)
 
                     Spacer(modifier = Modifier.height(16.dp))
 
@@ -431,7 +450,6 @@ fun NewProjectWizardScreen(
                             Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                                 val icon = when (template.iconName) {
                                     "view_quilt" -> Icons.Default.ViewQuilt
-                                    "lock" -> Icons.Default.Lock
                                     else -> Icons.Default.CropSquare
                                 }
                                 Icon(icon, contentDescription = null, tint = if (isSelected) NeonGreen else MaterialTheme.colorScheme.onSurface)
@@ -462,7 +480,10 @@ fun NewProjectWizardScreen(
                         Switch(
                             checked = isPrivateRepo,
                             onCheckedChange = { isPrivateRepo = it },
-                            colors = SwitchDefaults.colors(checkedThumbColor = NeonGreen)
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color(0xFF00FF66),
+                                checkedTrackColor = Color(0xFF1B382B)
+                            )
                         )
                     }
                 }
@@ -518,252 +539,104 @@ fun NewProjectWizardScreen(
                                 onClick = { imagePickerLauncher.launch("image/png") },
                                 enabled = !isCreating
                             ) {
-                                Icon(Icons.Default.AddPhotoAlternate, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Icon(Icons.Default.PhotoCamera, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text(if (iconBitmap != null) "Change PNG" else "Upload PNG Icon")
+                                Text(if (iconBitmap != null) "Change PNG" else "Upload PNG")
                             }
 
                             if (iconBitmap != null) {
-                                OutlinedButton(
-                                    onClick = {
-                                        iconBitmap = null
-                                        iconUri = null
-                                    },
+                                TextButton(
+                                    onClick = { iconBitmap = null },
                                     enabled = !isCreating
                                 ) {
-                                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Reset")
+                                    Text("Reset to Default")
                                 }
                             }
                         }
-
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = if (iconBitmap != null) "Custom PNG selected" else "Using default developer neon icon",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (iconBitmap != null) NeonGreen else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
                     }
 
-                    Spacer(modifier = Modifier.height(18.dp))
+                    Spacer(modifier = Modifier.height(20.dp))
 
-                    // GitHub Token Permission Checker & Account Status Card
                     Card(
+                        modifier = Modifier.fillMaxWidth(),
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp))
-                    ) {
-                        Column(modifier = Modifier.padding(14.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Default.Security, contentDescription = null, tint = NeonGreen, modifier = Modifier.size(20.dp))
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text("GitHub Token & Permissions", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
-                                }
-
-                                OutlinedButton(
-                                    onClick = { testTokenPermissions() },
-                                    enabled = !isTestingToken && !isCreating
-                                ) {
-                                    if (isTestingToken) {
-                                        CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp, color = NeonGreen)
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text("Testing...", style = MaterialTheme.typography.labelSmall)
-                                    } else {
-                                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(14.dp))
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text("Test Token", style = MaterialTheme.typography.labelSmall)
-                                    }
-                                }
-                            }
-
-                            Spacer(modifier = Modifier.height(8.dp))
-
-                            if (tokenInfo != null) {
-                                val info = tokenInfo!!
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Default.AccountCircle, contentDescription = null, tint = NeonGreen, modifier = Modifier.size(18.dp))
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Authenticated as @${info.user.login}", fontWeight = FontWeight.SemiBold, color = NeonGreen)
-                                }
-
-                                Spacer(modifier = Modifier.height(4.dp))
-
-                                val typeLabel = when (info.tokenType) {
-                                    TokenType.CLASSIC -> "Classic PAT (ghp_...)"
-                                    TokenType.FINE_GRAINED -> "Fine-Grained PAT (github_pat_...)"
-                                    TokenType.UNKNOWN -> "Personal Access Token"
-                                }
-                                Text("Token Type: $typeLabel", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-
-                                Spacer(modifier = Modifier.height(6.dp))
-
-                                if (info.tokenType == TokenType.CLASSIC) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        val repoOk = info.hasRepoScope
-                                        Icon(
-                                            if (repoOk) Icons.Default.CheckCircle else Icons.Default.Warning,
-                                            contentDescription = null,
-                                            tint = if (repoOk) NeonGreen else OrangeWarning,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(
-                                            text = if (repoOk) "Scope 'repo' detected (Full control)" else "Missing 'repo' scope! (Required for private repos)",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = if (repoOk) MaterialTheme.colorScheme.onSurface else OrangeWarning
-                                        )
-                                    }
-                                    Spacer(modifier = Modifier.height(2.dp))
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        val wfOk = info.hasWorkflowScope
-                                        Icon(
-                                            if (wfOk) Icons.Default.CheckCircle else Icons.Default.Warning,
-                                            contentDescription = null,
-                                            tint = if (wfOk) NeonGreen else OrangeWarning,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(
-                                            text = if (wfOk) "Scope 'workflow' detected (GitHub Actions)" else "Missing 'workflow' scope (Recommended for CI/CD)",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = if (wfOk) MaterialTheme.colorScheme.onSurface else OrangeWarning
-                                        )
-                                    }
-                                } else if (info.tokenType == TokenType.FINE_GRAINED) {
-                                    Card(
-                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                                        shape = RoundedCornerShape(8.dp)
-                                    ) {
-                                        Column(modifier = Modifier.padding(10.dp)) {
-                                            Text(
-                                                text = "Fine-grained Token Requirements:",
-                                                fontWeight = FontWeight.SemiBold,
-                                                style = MaterialTheme.typography.labelSmall
-                                            )
-                                            Spacer(modifier = Modifier.height(2.dp))
-                                            Text(
-                                                text = "• Repository access: 'All repositories' (Required to create new repos)\n• Administration: Read and write\n• Contents: Read and write\n• Workflows: Read and write",
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        }
-                                    }
-                                }
-                            } else if (tokenTestError != null) {
-                                Text(tokenTestError!!, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-                            } else {
-                                Text("Testing token permissions...", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    // Project Summary Card
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
                         shape = RoundedCornerShape(12.dp)
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
-                            Text("Project Configuration Summary:", fontWeight = FontWeight.Bold)
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text("• Name: $appName\n• Package: $packageName\n• Version: $versionName ($versionCodeInput)\n• Visibility: ${if (isPrivateRepo) "Private" else "Public"}\n• Icon: ${if (iconBitmap != null) "Custom PNG (Mipmaps Generated)" else "Default Adaptive Icon"}\n• Cloud Build: Automated GitHub Actions workflow")
+                            Text("Project Summary", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text("• App Name: $appName", style = MaterialTheme.typography.bodyMedium)
+                            Text("• Package: $packageName", style = MaterialTheme.typography.bodyMedium)
+                            Text("• Version: $versionName (Code $versionCodeInput)", style = MaterialTheme.typography.bodyMedium)
+                            Text("• Template: ${if (selectedTemplateId == "empty_views") "Empty Views Activity" else "Empty Compose Activity"}", style = MaterialTheme.typography.bodyMedium)
+                            Text("• Repository: ${if (isPrivateRepo) "Private" else "Public"}", style = MaterialTheme.typography.bodyMedium)
+                            Text("• Icon: ${if (iconBitmap != null) "Custom PNG (Mipmaps generated)" else "Default Adaptive Icon"}", style = MaterialTheme.typography.bodyMedium)
                         }
                     }
 
                     if (isCreating) {
-                        Spacer(modifier = Modifier.height(18.dp))
+                        Spacer(modifier = Modifier.height(16.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = NeonGreen)
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), color = NeonGreen, strokeWidth = 2.dp)
                             Spacer(modifier = Modifier.width(10.dp))
                             Text(statusText, style = MaterialTheme.typography.bodyMedium, color = NeonGreen)
                         }
                     }
 
-                    // Error Display with Details & Retry Button
                     if (errorMessage != null) {
                         Spacer(modifier = Modifier.height(16.dp))
                         Card(
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f)
-                            ),
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                            shape = RoundedCornerShape(10.dp)
                         ) {
                             Column(modifier = Modifier.padding(14.dp)) {
-                                Row(verticalAlignment = Alignment.Top) {
-                                    Icon(
-                                        Icons.Default.ErrorOutline,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.error,
-                                        modifier = Modifier.size(22.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(10.dp))
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = errorMessage!!,
-                                            color = MaterialTheme.colorScheme.error,
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            fontWeight = FontWeight.SemiBold
-                                        )
-                                    }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Default.ErrorOutline, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Repository Creation Error", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
                                 }
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(errorMessage!!, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onErrorContainer)
 
                                 if (!errorRawDetails.isNullOrBlank()) {
                                     Spacer(modifier = Modifier.height(10.dp))
                                     Row(
                                         modifier = Modifier
-                                            .clickable { isDetailsExpanded = !isDetailsExpanded }
-                                            .padding(vertical = 4.dp),
+                                            .fillMaxWidth()
+                                            .clickable { isDetailsExpanded = !isDetailsExpanded },
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Text(
-                                            text = if (isDetailsExpanded) "Hide details ▲" else "Show details ▼",
-                                            color = NeonGreen,
-                                            style = MaterialTheme.typography.labelMedium,
-                                            fontWeight = FontWeight.Bold
+                                            text = if (isDetailsExpanded) "Hide details" else "Show details",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.error
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Icon(
+                                            if (isDetailsExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.error,
+                                            modifier = Modifier.size(16.dp)
                                         )
                                     }
 
-                                    if (isDetailsExpanded) {
-                                        Spacer(modifier = Modifier.height(6.dp))
+                                    AnimatedVisibility(visible = isDetailsExpanded) {
                                         Box(
                                             modifier = Modifier
                                                 .fillMaxWidth()
+                                                .padding(top = 8.dp)
                                                 .background(DarkBackground, RoundedCornerShape(6.dp))
-                                                .padding(10.dp)
+                                                .padding(8.dp)
                                         ) {
                                             Text(
                                                 text = errorRawDetails!!,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
+                                                fontFamily = FontFamily.Monospace,
+                                                fontSize = 11.sp,
+                                                color = Color.LightGray
                                             )
                                         }
-                                    }
-                                }
-
-                                Spacer(modifier = Modifier.height(12.dp))
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.End
-                                ) {
-                                    Button(
-                                        onClick = { executeRepositoryCreation() },
-                                        colors = ButtonDefaults.buttonColors(containerColor = NeonGreen, contentColor = Color.Black),
-                                        enabled = !isCreating
-                                    ) {
-                                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text("Retry", fontWeight = FontWeight.Bold)
                                     }
                                 }
                             }
@@ -771,6 +644,8 @@ fun NewProjectWizardScreen(
                     }
                 }
             }
+
+            Spacer(modifier = Modifier.height(40.dp))
         }
     }
 }
