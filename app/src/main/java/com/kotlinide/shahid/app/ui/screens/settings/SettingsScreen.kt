@@ -22,11 +22,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material3.AlertDialog
@@ -173,7 +173,7 @@ fun SettingsScreen(
                         colors = ButtonDefaults.buttonColors(containerColor = RedError, contentColor = Color.White),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Icon(Icons.Default.Logout, contentDescription = null)
+                        Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = null)
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("Delete Token & Log Out")
                     }
@@ -300,7 +300,7 @@ fun SettingsScreen(
                                         .fillMaxWidth()
                                         .background(DarkBackground, RoundedCornerShape(8.dp))
                                         .padding(10.dp)
-                                Zhi) {
+                                ) {
                                     Column {
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),

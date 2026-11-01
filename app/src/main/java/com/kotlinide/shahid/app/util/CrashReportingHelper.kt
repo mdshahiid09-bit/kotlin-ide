@@ -126,14 +126,14 @@ object CrashReportingHelper {
 
     fun sanitize(input: String): String {
         var clean = input
-        // Redact GitHub Classic PAT
+        // Redact Authorization headers and Bearer tokens first
+        clean = clean.replace(Regex("(?i)authorization:\\s*Bearer\\s+[^\\s]+"), "Authorization: Bearer [REDACTED]")
+        clean = clean.replace(Regex("(?i)authorization:\\s*token\\s+[^\\s]+"), "Authorization: token [REDACTED]")
+        clean = clean.replace(Regex("(?i)\\bBearer\\s+[^\\s]+"), "Bearer [REDACTED]")
+        // Redact standalone GitHub Classic PAT
         clean = clean.replace(Regex("ghp_[a-zA-Z0-9]{20,}"), "[REDACTED_PAT_TOKEN]")
-        // Redact GitHub Fine-grained PAT
+        // Redact standalone GitHub Fine-grained PAT
         clean = clean.replace(Regex("github_pat_[a-zA-Z0-9_]{20,}"), "[REDACTED_PAT_TOKEN]")
-        // Redact Authorization headers and Bearer tokens
-        clean = clean.replace(Regex("(?i)authorization:\\s*Bearer\\s+[a-zA-Z0-9_.-]+"), "Authorization: Bearer [REDACTED]")
-        clean = clean.replace(Regex("(?i)authorization:\\s*token\\s+[a-zA-Z0-9_.-]+"), "Authorization: token [REDACTED]")
-        clean = clean.replace(Regex("Bearer\\s+[a-zA-Z0-9_.-]+"), "Bearer [REDACTED]")
         // Redact passwords and keystore credentials
         clean = clean.replace(Regex("(?i)password[=:]\\s*['\"]?[^\\s'\"]+"), "password=[REDACTED]")
         clean = clean.replace(Regex("(?i)keypass[=:]\\s*['\"]?[^\\s'\"]+"), "keypass=[REDACTED]")

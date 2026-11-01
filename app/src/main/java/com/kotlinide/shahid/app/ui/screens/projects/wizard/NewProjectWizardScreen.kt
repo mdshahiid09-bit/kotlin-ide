@@ -30,6 +30,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ViewQuilt
 import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CropSquare
@@ -38,7 +39,6 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PhotoCamera
-import androidx.compose.material.icons.filled.ViewQuilt
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -56,6 +56,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -145,7 +146,7 @@ fun NewProjectWizardScreen(
             try {
                 val bitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                     ImageDecoder.decodeBitmap(ImageDecoder.createSource(context.contentResolver, uri)) { decoder, _, _ ->
-                        decoder.allocatorSchema = ImageDecoder.ALLOCATOR_SOFTWARE
+                        decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
                         decoder.isMutableRequired = true
                     }
                 } else {
@@ -449,7 +450,7 @@ fun NewProjectWizardScreen(
                         ) {
                             Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                                 val icon = when (template.iconName) {
-                                    "view_quilt" -> Icons.Default.ViewQuilt
+                                    "view_quilt" -> Icons.AutoMirrored.Filled.ViewQuilt
                                     else -> Icons.Default.CropSquare
                                 }
                                 Icon(icon, contentDescription = null, tint = if (isSelected) NeonGreen else MaterialTheme.colorScheme.onSurface)

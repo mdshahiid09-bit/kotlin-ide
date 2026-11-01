@@ -479,7 +479,7 @@ class KotlinIdeDatabaseHelper private constructor(context: Context) :
                         name = it.getString(it.getColumnIndexOrThrow("name")),
                         fullName = it.getString(it.getColumnIndexOrThrow("full_name")),
                         private = it.getInt(it.getColumnIndexOrThrow("is_private")) == 1,
-                        html_url = it.getString(it.getColumnIndexOrThrow("html_url")),
+                        htmlUrl = it.getString(it.getColumnIndexOrThrow("html_url")),
                         cloneUrl = it.getString(it.getColumnIndexOrThrow("clone_url")),
                         defaultBranch = it.getString(it.getColumnIndexOrThrow("default_branch")),
                         owner = GitHubUser(
