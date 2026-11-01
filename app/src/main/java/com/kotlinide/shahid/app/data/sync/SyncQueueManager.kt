@@ -26,7 +26,7 @@ class SyncQueueManager(private val context: Context) {
         if (!queueFile.exists()) return mutableListOf()
         return try {
             json.decodeFromString<List<QueuedSyncAction>>(queueFile.readText()).toMutableList()
-        } catch (_: Exception) {
+        } catch (e: Exception) {
             mutableListOf()
         }
     }
@@ -35,7 +35,7 @@ class SyncQueueManager(private val context: Context) {
     private fun writeQueue(list: List<QueuedSyncAction>) {
         try {
             queueFile.writeText(json.encodeToString(list))
-        } catch (_: Exception) {}
+        } catch (e: Exception) {}
     }
 
     suspend fun enqueue(action: QueuedSyncAction) = withContext(Dispatchers.IO) {
