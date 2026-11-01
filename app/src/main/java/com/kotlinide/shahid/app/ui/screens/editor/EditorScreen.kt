@@ -94,6 +94,7 @@ import com.kotlinide.shahid.app.ui.theme.DarkSurfaceVariant
 import com.kotlinide.shahid.app.ui.theme.DarkTextPrimary
 import com.kotlinide.shahid.app.ui.theme.DarkTextSecondary
 import com.kotlinide.shahid.app.ui.theme.NeonGreen
+import com.kotlinide.shahid.app.ui.theme.OrangeWarning
 import com.kotlinide.shahid.app.ui.theme.RedError
 import com.kotlinide.shahid.app.util.NotificationHelper
 import kotlinx.coroutines.delay
