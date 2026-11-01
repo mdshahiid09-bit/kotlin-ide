@@ -22,6 +22,28 @@ android {
         }
     }
 
+    val ksFile = System.getenv("KEYSTORE_FILE")
+    val ksPass = System.getenv("KEYSTORE_PASSWORD")
+    val kAlias = System.getenv("KEY_ALIAS")
+    val kPass = System.getenv("KEY_PASSWORD")
+
+    val hasReleaseSigning = !ksFile.isNullOrBlank() &&
+            file(ksFile).exists() &&
+            !ksPass.isNullOrBlank() &&
+            !kAlias.isNullOrBlank() &&
+            !kPass.isNullOrBlank()
+
+    signingConfigs {
+        create("release") {
+            if (hasReleaseSigning) {
+                storeFile = file(ksFile!!)
+                storePassword = ksPass
+                keyAlias = kAlias
+                keyPassword = kPass
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -29,6 +51,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
         debug {
             applicationIdSuffix = ""

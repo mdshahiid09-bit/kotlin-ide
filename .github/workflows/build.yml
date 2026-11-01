@@ -1,4 +1,4 @@
-name: Build Android Debug APK
+name: Build Android APKs
 
 on:
   push:
@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   build:
-    name: Assemble Debug APK
+    name: Build Debug and Signed Release APKs
     runs-on: ubuntu-latest
 
     steps:
@@ -40,30 +40,109 @@ jobs:
       - name: Accept Android SDK Licenses
         run: yes | sdkmanager --licenses || true
 
+      - name: Check Keystore Secrets Availability
+        id: keystore_check
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ] && [ -n "$KEYSTORE_PASSWORD" ] && [ -n "$KEY_ALIAS" ] && [ -n "$KEY_PASSWORD" ]; then
+            echo "HAS_KEYSTORE=true" >> $GITHUB_ENV
+            echo "Signing secrets are configured."
+          else
+            echo "HAS_KEYSTORE=false" >> $GITHUB_ENV
+            echo "Signing secrets are not fully configured. Release signing will be skipped."
+          fi
+
+      - name: Decode Release Keystore
+        if: env.HAS_KEYSTORE == 'true'
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          KEYSTORE_DIR="${{ runner.temp }}/keystore"
+          mkdir -p "$KEYSTORE_DIR"
+          echo "$KEYSTORE_BASE64" | tr -d '\r\n ' | base64 --decode > "$KEYSTORE_DIR/release.jks" || echo "$KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_DIR/release.jks"
+          chmod 600 "$KEYSTORE_DIR/release.jks"
+          if [ ! -s "$KEYSTORE_DIR/release.jks" ]; then
+            echo "Error: Keystore file is empty after decoding!"
+            exit 1
+          fi
+          echo "KEYSTORE_FILE=$KEYSTORE_DIR/release.jks" >> $GITHUB_ENV
+          ls -lh "$KEYSTORE_DIR/release.jks" | awk '{print "Keystore file created with size: " $5}'
+
       - name: Build Debug APK
-        id: assemble
+        id: build_debug
         run: |
           set -o pipefail
-          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee build_log.txt
+          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee build_debug_log.txt
+
+      - name: Build Signed Release APK
+        id: build_release
+        if: env.HAS_KEYSTORE == 'true'
+        env:
+          KEYSTORE_FILE: ${{ env.KEYSTORE_FILE }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -o pipefail
+          ./gradlew assembleRelease --no-daemon --stacktrace 2>&1 | tee build_release_log.txt
+
+      - name: Verify Release APK Signature
+        if: env.HAS_KEYSTORE == 'true' && success()
+        run: |
+          RELEASE_APK=$(ls app/build/outputs/apk/release/*.apk 2>/dev/null | head -n 1)
+          if [ -n "$RELEASE_APK" ] && [ -f "$RELEASE_APK" ]; then
+            echo "Found Release APK: $RELEASE_APK"
+            echo "Verifying signature with apksigner..."
+            APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)
+            if [ -n "$APKSIGNER" ] && [ -x "$APKSIGNER" ]; then
+              "$APKSIGNER" verify --verbose "$RELEASE_APK"
+            else
+              echo "apksigner not found, skipping verification"
+            fi
+          else
+            echo "No release APK found to verify."
+          fi
 
       - name: Report Failure Diagnostic
         if: failure()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [ -f build_log.txt ]; then
-            if grep -q "^e: " build_log.txt; then
-              grep -C 2 "^e: " build_log.txt | head -n 80 > log_summary.txt
+          LOG_FILE=""
+          if [ -f build_release_log.txt ]; then
+            LOG_FILE="build_release_log.txt"
+          elif [ -f build_debug_log.txt ]; then
+            LOG_FILE="build_debug_log.txt"
+          fi
+
+          if [ -n "$LOG_FILE" ]; then
+            if grep -q "^e: " "$LOG_FILE"; then
+              grep -C 2 "^e: " "$LOG_FILE" | head -n 80 > log_summary.txt
             else
-              tail -n 80 build_log.txt > log_summary.txt
+              tail -n 80 "$LOG_FILE" > log_summary.txt
             fi
           else
-            echo "No build_log.txt found" > log_summary.txt
+            echo "No build log found" > log_summary.txt
           fi
           gh issue create --title "Build Diagnostic #${{ github.run_number }}" --body "Automated build failure log:
           \`\`\`
           $(cat log_summary.txt)
           \`\`\`" || true
+
+      - name: Clean Up Keystore
+        if: always()
+        run: |
+          if [ -n "${{ env.KEYSTORE_FILE }}" ] && [ -f "${{ env.KEYSTORE_FILE }}" ]; then
+            shred -u "${{ env.KEYSTORE_FILE }}" 2>/dev/null || rm -f "${{ env.KEYSTORE_FILE }}"
+          fi
+          if [ -d "${{ runner.temp }}/keystore" ]; then
+            rm -rf "${{ runner.temp }}/keystore"
+          fi
+          echo "Temporary keystore files securely cleaned up."
 
       - name: Upload Debug APK Artifact
         if: success()
@@ -74,16 +153,41 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Upload Signed Release APK Artifact
+        if: success() && env.HAS_KEYSTORE == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: kotlin-ide-release-signed
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Create GitHub Release
         if: success()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          APK_PATH=$(ls app/build/outputs/apk/debug/*.apk 2>/dev/null | head -n 1)
-          echo "Found APK at: $APK_PATH"
-          cp "$APK_PATH" KotlinIDE-debug.apk
+          ASSETS=()
+          DEBUG_APK=$(ls app/build/outputs/apk/debug/*.apk 2>/dev/null | head -n 1)
+          if [ -n "$DEBUG_APK" ] && [ -f "$DEBUG_APK" ]; then
+            echo "Found Debug APK at: $DEBUG_APK"
+            cp "$DEBUG_APK" KotlinIDE-debug.apk
+            ASSETS+=("KotlinIDE-debug.apk")
+          fi
+
+          RELEASE_APK=$(ls app/build/outputs/apk/release/*.apk 2>/dev/null | head -n 1)
+          if [ -n "$RELEASE_APK" ] && [ -f "$RELEASE_APK" ]; then
+            echo "Found Signed Release APK at: $RELEASE_APK"
+            cp "$RELEASE_APK" KotlinIDE-release.apk
+            ASSETS+=("KotlinIDE-release.apk")
+          fi
+
           RELEASE_TAG="v1.0.0-build-${{ github.run_number }}"
-          gh release create "$RELEASE_TAG" KotlinIDE-debug.apk \
+          NOTES="### Kotlin IDE Build #${{ github.run_number }}
+          - **Debug APK**: \`KotlinIDE-debug.apk\` (Development testing)
+          $([ -n "$RELEASE_APK" ] && echo "- **Signed Release APK**: \`KotlinIDE-release.apk\` (Production signed with Keystore)")"
+
+          gh release create "$RELEASE_TAG" "${ASSETS[@]}" \
             --title "Kotlin IDE Release #${{ github.run_number }}" \
-            --notes "Kotlin IDE Debug APK. Ready to install on Android phone." \
+            --notes "$NOTES" \
             --latest
