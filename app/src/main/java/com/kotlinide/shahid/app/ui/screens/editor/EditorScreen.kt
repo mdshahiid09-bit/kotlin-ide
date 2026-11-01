@@ -24,6 +24,9 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.FormatAlignLeft
+import androidx.compose.material.icons.automirrored.filled.Redo
+import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
@@ -34,17 +37,14 @@ import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.Error
-import androidx.compose.material.icons.filled.FormatAlignLeft
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Redo
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Sync
-import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -108,6 +108,9 @@ import com.kotlinide.shahid.app.data.security.TokenStorage
 import com.kotlinide.shahid.app.data.storage.DraftStorage
 import com.kotlinide.shahid.app.data.storage.ProjectStorage
 import com.kotlinide.shahid.app.data.sync.SyncQueueManager
+import com.kotlinide.shahid.app.editor.EditorAutoComplete
+import com.kotlinide.shahid.app.editor.EditorLinter
+import com.kotlinide.shahid.app.editor.LintSeverity
 import com.kotlinide.shahid.app.ui.screens.build.BuildLogPanel
 import com.kotlinide.shahid.app.ui.theme.DarkBackground
 import com.kotlinide.shahid.app.ui.theme.DarkBorder
@@ -884,9 +887,21 @@ fun EditorScreen(
             bottomBar = {
                 Column {
                     if (openTabs.isNotEmpty()) {
+                        val activeTab = openTabs.getOrNull(activeTabIndex)
+                        val ext = activeTab?.fileName?.substringAfterLast('.', "") ?: "kt"
+                        val content = activeTab?.content.orEmpty()
+                        val cursor = activeTab?.cursorPosition ?: 0
+                        val lintIssues = remember(content, ext) { EditorLinter.lint(content, ext) }
+                        val suggestions = remember(content, cursor, ext) {
+                            EditorAutoComplete.getSuggestions(content, cursor, ext)
+                        }
+                        val firstError = lintIssues.firstOrNull { it.severity == LintSeverity.ERROR }
+                        val linterText = if (firstError != null) "Line ${firstError.line}: ${firstError.message}" else "✔ Syntax OK"
+
                         CodingAccessoryBar(
+                            suggestions = suggestions,
+                            linterStatus = linterText,
                             onInsertSymbol = { symbol ->
-                                val activeTab = openTabs.getOrNull(activeTabIndex)
                                 if (activeTab != null) {
                                     val current = activeTab.content
                                     val pos = activeTab.cursorPosition.coerceIn(0, current.length)
@@ -1038,10 +1053,10 @@ fun EditorScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         IconButton(onClick = { activeTab.undo() }, modifier = Modifier.size(30.dp)) {
-                            Icon(Icons.Default.Undo, contentDescription = "Undo", modifier = Modifier.size(16.dp))
+                            Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "Undo", modifier = Modifier.size(16.dp))
                         }
                         IconButton(onClick = { activeTab.redo() }, modifier = Modifier.size(30.dp)) {
-                            Icon(Icons.Default.Redo, contentDescription = "Redo", modifier = Modifier.size(16.dp))
+                            Icon(Icons.AutoMirrored.Filled.Redo, contentDescription = "Redo", modifier = Modifier.size(16.dp))
                         }
                         IconButton(
                             onClick = {
@@ -1055,7 +1070,7 @@ fun EditorScreen(
                             },
                             modifier = Modifier.size(30.dp)
                         ) {
-                            Icon(Icons.Default.FormatAlignLeft, contentDescription = "Format", modifier = Modifier.size(16.dp))
+                            Icon(Icons.AutoMirrored.Filled.FormatAlignLeft, contentDescription = "Format", modifier = Modifier.size(16.dp))
                         }
 
                         Spacer(modifier = Modifier.weight(1f))
