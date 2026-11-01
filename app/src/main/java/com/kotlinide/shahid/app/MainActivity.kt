@@ -32,6 +32,8 @@ class MainActivity : ComponentActivity() {
         val appPreferences = app.appPreferences
         val tokenStorage = app.tokenStorage
         val projectStorage = app.projectStorage
+        val draftStorage = app.draftStorage
+        val syncQueueManager = app.syncQueueManager
 
         setContent {
             var isDarkTheme by remember { mutableStateOf(appPreferences.isDarkTheme) }
@@ -49,6 +51,8 @@ class MainActivity : ComponentActivity() {
                         tokenStorage = tokenStorage,
                         appPreferences = appPreferences,
                         projectStorage = projectStorage,
+                        draftStorage = draftStorage,
+                        syncQueueManager = syncQueueManager,
                         onThemeToggle = { isDark -> isDarkTheme = isDark }
                     )
 
