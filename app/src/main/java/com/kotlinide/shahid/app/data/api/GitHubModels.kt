@@ -79,6 +79,13 @@ data class FileContentRequest(
 )
 
 @Serializable
+data class DeleteFileRequest(
+    val message: String,
+    val sha: String,
+    val branch: String = "main"
+)
+
+@Serializable
 data class FileContentResponse(
     val name: String = "",
     val path: String = "",
@@ -192,4 +199,25 @@ data class RepoPublicKeyResponse(
 data class SetSecretRequest(
     @SerialName("encrypted_value") val encryptedValue: String,
     @SerialName("key_id") val keyId: String
+)
+
+@Serializable
+enum class SyncActionType {
+    CREATE_OR_UPDATE,
+    DELETE,
+    RENAME
+}
+
+@Serializable
+data class QueuedSyncAction(
+    val id: String = java.util.UUID.randomUUID().toString(),
+    val projectId: String,
+    val owner: String,
+    val repo: String,
+    val actionType: SyncActionType,
+    val path: String,
+    val content: String? = null,
+    val oldPath: String? = null,
+    val sha: String? = null,
+    val timestamp: Long = System.currentTimeMillis()
 )
