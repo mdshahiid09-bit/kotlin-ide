@@ -66,7 +66,7 @@ class GitHubApiService(private val tokenStorage: TokenStorage) {
                 if (detailsList.isNotEmpty()) {
                     errorDetails = detailsList.joinToString(", ")
                 }
-            } catch (_: Exception) {
+            } catch (e: Exception) {
                 // Not standard JSON
             }
         }
@@ -121,7 +121,7 @@ class GitHubApiService(private val tokenStorage: TokenStorage) {
         return try {
             val clean = rawBase64.replace("\n", "").replace("\r", "")
             String(Base64.decode(clean, Base64.DEFAULT), Charsets.UTF_8)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
             rawBase64
         }
     }
