@@ -1,6 +1,7 @@
 package com.kotlinide.shahid.app.data.storage
 
 import android.content.Context
+import com.kotlinide.shahid.app.data.db.KotlinIdeDatabaseHelper
 import com.kotlinide.shahid.app.data.model.BuildInfo
 import com.kotlinide.shahid.app.data.model.Note
 import com.kotlinide.shahid.app.data.model.Project
@@ -21,41 +22,71 @@ class ProjectStorage(private val context: Context) {
         prettyPrint = true
     }
 
+    private val dbHelper = KotlinIdeDatabaseHelper.getInstance(context)
+
     private val projectsFile = File(context.filesDir, "projects.json")
     private val buildsFile = File(context.filesDir, "builds.json")
     private val notesFile = File(context.filesDir, "notes.json")
 
     private val projectsDir = File(context.filesDir, "projects_data").apply { mkdirs() }
 
+    init {
+        migrateLegacyJsonToDb()
+    }
+
+    private fun migrateLegacyJsonToDb() {
+        try {
+            if (projectsFile.exists()) {
+                val pList = json.decodeFromString<List<Project>>(projectsFile.readText())
+                pList.forEach { dbHelper.saveProject(it) }
+            }
+            if (buildsFile.exists()) {
+                val bList = json.decodeFromString<List<BuildInfo>>(buildsFile.readText())
+                bList.forEach { dbHelper.saveBuild(it) }
+            }
+            if (notesFile.exists()) {
+                val nList = json.decodeFromString<List<Note>>(notesFile.readText())
+                nList.forEach { dbHelper.saveNote(it) }
+            }
+        } catch (e: Exception) {
+            // Ignore migration error
+        }
+    }
+
     suspend fun getProjects(): List<Project> = withContext(Dispatchers.IO) {
+        val dbProjects = dbHelper.getProjects()
+        if (dbProjects.isNotEmpty()) {
+            return@withContext dbProjects
+        }
         if (!projectsFile.exists()) return@withContext emptyList()
         try {
             val content = projectsFile.readText()
-            json.decodeFromString<List<Project>>(content)
+            val list = json.decodeFromString<List<Project>>(content)
+            list.forEach { dbHelper.saveProject(it) }
+            list
         } catch (e: Exception) {
             emptyList()
         }
     }
 
     suspend fun saveProject(project: Project) = withContext(Dispatchers.IO) {
-        val current = getProjects().toMutableList()
-        val index = current.indexOfFirst { it.id == project.id }
-        if (index >= 0) {
-            current[index] = project
-        } else {
-            current.add(0, project)
-        }
-        projectsFile.writeText(json.encodeToString(current))
+        dbHelper.saveProject(project)
+        val current = dbHelper.getProjects()
+        try {
+            projectsFile.writeText(json.encodeToString(current))
+        } catch (e: Exception) {}
     }
 
     suspend fun getProject(projectId: String): Project? = withContext(Dispatchers.IO) {
-        getProjects().find { it.id == projectId }
+        dbHelper.getProject(projectId)
     }
 
     suspend fun deleteProject(projectId: String) = withContext(Dispatchers.IO) {
-        val current = getProjects().toMutableList()
-        current.removeAll { it.id == projectId }
-        projectsFile.writeText(json.encodeToString(current))
+        dbHelper.deleteProject(projectId)
+        val current = dbHelper.getProjects()
+        try {
+            projectsFile.writeText(json.encodeToString(current))
+        } catch (e: Exception) {}
 
         val dir = getProjectDirectory(projectId)
         if (dir.exists()) {
@@ -72,111 +103,39 @@ class ProjectStorage(private val context: Context) {
 
     suspend fun getBuilds(projectId: String): List<BuildInfo> = withContext(Dispatchers.IO) {
         cleanOldBuildLogs()
-        if (!buildsFile.exists()) return@withContext emptyList()
-        try {
-            val allBuilds = json.decodeFromString<List<BuildInfo>>(buildsFile.readText())
-            allBuilds.filter { it.projectId == projectId }.sortedByDescending { it.createdAt }
-        } catch (e: Exception) {
-            emptyList()
-        }
+        dbHelper.getBuilds(projectId)
     }
 
     suspend fun saveBuild(build: BuildInfo) = withContext(Dispatchers.IO) {
-        val allBuilds = try {
-            if (buildsFile.exists()) json.decodeFromString<List<BuildInfo>>(buildsFile.readText()).toMutableList()
-            else mutableListOf()
-        } catch (e: Exception) {
-            mutableListOf()
-        }
-
-        val index = allBuilds.indexOfFirst { it.id == build.id && it.projectId == build.projectId }
-        if (index >= 0) {
-            allBuilds[index] = build
-        } else {
-            allBuilds.add(0, build)
-        }
-
-        val grouped = allBuilds.groupBy { it.projectId }
-        val trimmedList = mutableListOf<BuildInfo>()
-        for ((_, projectBuilds) in grouped) {
-            val top10 = projectBuilds.sortedByDescending { it.createdAt }.take(10)
-            trimmedList.addAll(top10)
-        }
-
-        buildsFile.writeText(json.encodeToString(trimmedList))
+        dbHelper.saveBuild(build)
+        try {
+            val allBuilds = dbHelper.getBuilds(build.projectId)
+            buildsFile.writeText(json.encodeToString(allBuilds))
+        } catch (e: Exception) {}
     }
 
     private suspend fun deleteBuildsForProject(projectId: String) = withContext(Dispatchers.IO) {
-        if (!buildsFile.exists()) return@withContext
-        try {
-            val allBuilds = json.decodeFromString<List<BuildInfo>>(buildsFile.readText()).toMutableList()
-            allBuilds.removeAll { it.projectId == projectId }
-            buildsFile.writeText(json.encodeToString(allBuilds))
-        } catch (_: Exception) {}
+        dbHelper.deleteBuildsForProject(projectId)
     }
 
     private suspend fun cleanOldBuildLogs() = withContext(Dispatchers.IO) {
-        if (!buildsFile.exists()) return@withContext
-        try {
-            val thirtyDaysAgo = System.currentTimeMillis() - (30L * 24L * 60L * 60L * 1000L)
-            val allBuilds = json.decodeFromString<List<BuildInfo>>(buildsFile.readText()).toMutableList()
-            var modified = false
-            for (i in allBuilds.indices) {
-                val b = allBuilds[i]
-                if (b.createdAt < thirtyDaysAgo && b.rawLog.isNotBlank()) {
-                    allBuilds[i] = b.copy(rawLog = "")
-                    modified = true
-                }
-            }
-            if (modified) {
-                buildsFile.writeText(json.encodeToString(allBuilds))
-            }
-        } catch (_: Exception) {}
+        dbHelper.cleanOldBuildLogs()
     }
 
     suspend fun getNotes(projectId: String): List<Note> = withContext(Dispatchers.IO) {
-        if (!notesFile.exists()) return@withContext emptyList()
-        try {
-            val allNotes = json.decodeFromString<List<Note>>(notesFile.readText())
-            allNotes.filter { it.projectId == projectId }.sortedByDescending { it.updatedAt }
-        } catch (e: Exception) {
-            emptyList()
-        }
+        dbHelper.getNotes(projectId)
     }
 
     suspend fun saveNote(note: Note) = withContext(Dispatchers.IO) {
-        val allNotes = try {
-            if (notesFile.exists()) json.decodeFromString<List<Note>>(notesFile.readText()).toMutableList()
-            else mutableListOf()
-        } catch (e: Exception) {
-            mutableListOf()
-        }
-
-        val index = allNotes.indexOfFirst { it.id == note.id }
-        if (index >= 0) {
-            allNotes[index] = note
-        } else {
-            allNotes.add(0, note)
-        }
-        notesFile.writeText(json.encodeToString(allNotes))
+        dbHelper.saveNote(note)
     }
 
     suspend fun deleteNote(noteId: String) = withContext(Dispatchers.IO) {
-        if (!notesFile.exists()) return@withContext
-        try {
-            val allNotes = json.decodeFromString<List<Note>>(notesFile.readText()).toMutableList()
-            allNotes.removeAll { it.id == noteId }
-            notesFile.writeText(json.encodeToString(allNotes))
-        } catch (_: Exception) {}
+        dbHelper.deleteNote(noteId)
     }
 
     private suspend fun deleteNotesForProject(projectId: String) = withContext(Dispatchers.IO) {
-        if (!notesFile.exists()) return@withContext
-        try {
-            val allNotes = json.decodeFromString<List<Note>>(notesFile.readText()).toMutableList()
-            allNotes.removeAll { it.projectId == projectId }
-            notesFile.writeText(json.encodeToString(allNotes))
-        } catch (_: Exception) {}
+        dbHelper.deleteNotesForProject(projectId)
     }
 
     suspend fun exportProjectToZip(projectId: String, targetZipFile: File): Boolean = withContext(Dispatchers.IO) {

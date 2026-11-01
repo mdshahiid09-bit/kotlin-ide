@@ -13,8 +13,8 @@ object TemplateProvider {
         hasCustomIcon: Boolean = false
     ): Map<String, String> {
         val files = mutableMapOf<String, String>()
-
         val packagePath = packageName.replace('.', '/')
+        val isViewsTemplate = templateId == "empty_views"
 
         // 1. Root settings.gradle.kts
         files["settings.gradle.kts"] = """
@@ -44,13 +44,22 @@ include(":app")
 """.trimIndent()
 
         // 2. Root build.gradle.kts
-        files["build.gradle.kts"] = """
+        files["build.gradle.kts"] = if (isViewsTemplate) {
+            """
+plugins {
+    alias(libs.plugins.android.application) apply false
+    alias(libs.plugins.kotlin.android) apply false
+}
+""".trimIndent()
+        } else {
+            """
 plugins {
     alias(libs.plugins.android.application) apply false
     alias(libs.plugins.kotlin.android) apply false
     alias(libs.plugins.kotlin.compose) apply false
 }
 """.trimIndent()
+        }
 
         // 3. gradle.properties
         files["gradle.properties"] = """
@@ -61,7 +70,28 @@ kotlin.code.style=official
 """.trimIndent()
 
         // 4. gradle/libs.versions.toml
-        files["gradle/libs.versions.toml"] = """
+        files["gradle/libs.versions.toml"] = if (isViewsTemplate) {
+            """
+[versions]
+agp = "8.7.2"
+kotlin = "2.0.21"
+coreKtx = "1.15.0"
+appcompat = "1.7.0"
+material = "1.12.0"
+constraintlayout = "2.2.0"
+
+[libraries]
+androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
+material = { group = "com.google.android.material", name = "material", version.ref = "material" }
+androidx-constraintlayout = { group = "androidx.constraintlayout", name = "constraintlayout", version.ref = "constraintlayout" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+""".trimIndent()
+        } else {
+            """
 [versions]
 agp = "8.7.2"
 kotlin = "2.0.21"
@@ -69,7 +99,6 @@ coreKtx = "1.15.0"
 lifecycleRuntimeKtx = "2.8.7"
 activityCompose = "1.9.3"
 composeBom = "2024.10.01"
-navigationCompose = "2.8.3"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -81,17 +110,67 @@ androidx-ui-graphics = { group = "androidx.compose.ui", name = "ui-graphics" }
 androidx-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
 androidx-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
 androidx-material3 = { group = "androidx.compose.material3", name = "material3" }
-androidx-material-icons-extended = { group = "androidx.compose.material", name = "material-icons-extended" }
-androidx-navigation-compose = { group = "androidx.navigation", name = "navigation-compose", version.ref = "navigationCompose" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 """.trimIndent()
+        }
 
         // 5. app/build.gradle.kts
-        files["app/build.gradle.kts"] = """
+        files["app/build.gradle.kts"] = if (isViewsTemplate) {
+            """
+plugins {
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.android)
+}
+
+android {
+    namespace = "$packageName"
+    compileSdk = $targetSdk
+
+    defaultConfig {
+        applicationId = "$packageName"
+        minSdk = $minSdk
+        targetSdk = $targetSdk
+        versionCode = $versionCode
+        versionName = "$versionName"
+
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+        }
+        debug {
+            applicationIdSuffix = ".debug"
+            isDebuggable = true
+        }
+    }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+}
+
+dependencies {
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.appcompat)
+    implementation(libs.material)
+    implementation(libs.androidx.constraintlayout)
+}
+""".trimIndent()
+        } else {
+            """
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -149,12 +228,11 @@ dependencies {
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
-    implementation(libs.androidx.material.icons.extended)
-    implementation(libs.androidx.navigation.compose)
 
     debugImplementation(libs.androidx.ui.tooling)
 }
 """.trimIndent()
+        }
 
         // 6. app/proguard-rules.pro
         files["app/proguard-rules.pro"] = "# Project Proguard Rules\n"
@@ -175,8 +253,7 @@ dependencies {
         android:theme="@style/Theme.App">
         <activity
             android:name=".MainActivity"
-            android:exported="true"
-            android:theme="@style/Theme.App">
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -196,12 +273,21 @@ dependencies {
 """.trimIndent()
 
         // 9. themes.xml
-        files["app/src/main/res/values/themes.xml"] = """
+        files["app/src/main/res/values/themes.xml"] = if (isViewsTemplate) {
+            """
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.App" parent="Theme.Material3.DayNight.NoActionBar" />
+</resources>
+""".trimIndent()
+        } else {
+            """
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.App" parent="android:Theme.Material.NoActionBar" />
 </resources>
 """.trimIndent()
+        }
 
         // 10. Default adaptive launcher icons if not custom icon
         if (!hasCustomIcon) {
@@ -252,8 +338,74 @@ dependencies {
 """.trimIndent()
         }
 
-        // 11. Compose Theme files
-        files["app/src/main/java/$packagePath/ui/theme/Color.kt"] = """
+        if (isViewsTemplate) {
+            // Layout activity_main.xml
+            files["app/src/main/res/layout/activity_main.xml"] = """
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:padding="24dp">
+
+    <TextView
+        android:id="@+id/tvTitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Welcome to $appName!"
+        android:textSize="22sp"
+        android:textStyle="bold"
+        app:layout_constraintBottom_toTopOf="@+id/btnClick"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintVertical_chainStyle="packed" />
+
+    <Button
+        android:id="@+id/btnClick"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="20dp"
+        android:text="Click Me"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/tvTitle" />
+
+</androidx.constraintlayout.widget.ConstraintLayout>
+""".trimIndent()
+
+            // MainActivity.kt for Views
+            files["app/src/main/java/$packagePath/MainActivity.kt"] = """
+package $packageName
+
+import android.os.Bundle
+import android.widget.Button
+import android.widget.TextView
+import androidx.appcompat.app.AppCompatActivity
+
+class MainActivity : AppCompatActivity() {
+
+    private var clickCount = 0
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+
+        val tvTitle = findViewById<TextView>(R.id.tvTitle)
+        val btnClick = findViewById<Button>(R.id.btnClick)
+
+        btnClick.setOnClickListener {
+            clickCount++
+            tvTitle.text = "Button clicked ${'$'}clickCount times!"
+        }
+    }
+}
+""".trimIndent()
+
+        } else {
+            // Compose Theme files
+            files["app/src/main/java/$packagePath/ui/theme/Color.kt"] = """
 package $packageName.ui.theme
 
 import androidx.compose.ui.graphics.Color
@@ -268,7 +420,7 @@ val Pink40 = Color(0xFF7D5260)
 val NeonAccent = Color(0xFF00FF66)
 """.trimIndent()
 
-        files["app/src/main/java/$packagePath/ui/theme/Theme.kt"] = """
+            files["app/src/main/java/$packagePath/ui/theme/Theme.kt"] = """
 package $packageName.ui.theme
 
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -302,47 +454,8 @@ fun AppTheme(
 }
 """.trimIndent()
 
-        // 12. Template-specific MainActivity.kt
-        when (templateId) {
-            "bottom_navigation" -> {
-                files["app/src/main/java/$packagePath/MainActivity.kt"] = generateBottomNavMainActivity(packageName, appName)
-            }
-            "login_home" -> {
-                files["app/src/main/java/$packagePath/MainActivity.kt"] = generateLoginHomeMainActivity(packageName, appName)
-            }
-            else -> {
-                files["app/src/main/java/$packagePath/MainActivity.kt"] = generateEmptyActivityMainActivity(packageName, appName)
-            }
-        }
-
-        // 13. GitHub Actions Workflow (.github/workflows/build-apk.yml)
-        files[".github/workflows/build-apk.yml"] = generateProjectWorkflow(appName)
-
-        // 14. README.md
-        files["README.md"] = """
-# $appName
-
-$appName was built and generated directly using **Kotlin IDE on Android**.
-
-## Tech Stack
-- Jetpack Compose with Material 3
-- Kotlin 2.0.21
-- Android Gradle Plugin 8.7.2
-- Minimum SDK: $minSdk
-- Target SDK: $targetSdk
-
-## Build Instructions
-This repository includes a GitHub Actions CI/CD workflow (`.github/workflows/build-apk.yml`) that automatically compiles:
-1. **Debug APK**: Installable directly on any Android device.
-2. **Release AAB**: Android App Bundle ready for Google Play Console.
-
-Trigger the build anytime via **Kotlin IDE** on your phone or in the **Actions** tab on GitHub!
-""".trimIndent()
-
-        return files
-    }
-
-    private fun generateEmptyActivityMainActivity(packageName: String, appName: String): String = """
+            // MainActivity.kt for Compose
+            files["app/src/main/java/$packagePath/MainActivity.kt"] = """
 package $packageName
 
 import android.os.Bundle
@@ -399,198 +512,24 @@ fun MainScreen() {
             text = "$appName",
             style = MaterialTheme.typography.headlineMedium
         )
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(8.dp))
         Text(
-            text = "Welcome to your new Compose app!",
-            style = MaterialTheme.typography.bodyLarge
+            text = "Built with Kotlin IDE on Android",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(modifier = Modifier.height(24.dp))
         Button(onClick = { counter++ }) {
-            Text(text = "Clicked: ${'$'}counter times")
+            Text("Button tapped: ${'$'}counter times")
         }
     }
 }
 """.trimIndent()
-
-    private fun generateBottomNavMainActivity(packageName: String, appName: String): String = """
-package $packageName
-
-import android.os.Bundle
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Dashboard
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import $packageName.ui.theme.AppTheme
-
-class MainActivity : ComponentActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        setContent {
-            AppTheme {
-                BottomNavApp()
-            }
         }
-    }
-}
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun BottomNavApp() {
-    var selectedIndex by remember { mutableIntStateOf(0) }
-    val tabs = listOf("Home", "Dashboard", "Settings")
-    val icons = listOf(Icons.Default.Home, Icons.Default.Dashboard, Icons.Default.Settings)
-
-    Scaffold(
-        topBar = {
-            TopAppBar(title = { Text(text = "$appName - " + tabs[selectedIndex]) })
-        },
-        bottomBar = {
-            NavigationBar {
-                tabs.forEachIndexed { index, title ->
-                    NavigationBarItem(
-                        selected = selectedIndex == index,
-                        onClick = { selectedIndex = index },
-                        icon = { Icon(icons[index], contentDescription = title) },
-                        label = { Text(title) }
-                    )
-                }
-            }
-        }
-    ) { padding ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(text = "Active Tab: " + tabs[selectedIndex])
-        }
-    }
-}
-""".trimIndent()
-
-    private fun generateLoginHomeMainActivity(packageName: String, appName: String): String = """
-package $packageName
-
-import android.os.Bundle
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.unit.dp
-import $packageName.ui.theme.AppTheme
-
-class MainActivity : ComponentActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        setContent {
-            AppTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
-                ) {
-                    LoginHomeFlow()
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun LoginHomeFlow() {
-    var isLoggedIn by remember { mutableStateOf(false) }
-    var email by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
-
-    if (!isLoggedIn) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(24.dp),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(text = "Sign In to $appName", style = MaterialTheme.typography.headlineMedium)
-            Spacer(modifier = Modifier.height(16.dp))
-            OutlinedTextField(
-                value = email,
-                onValueChange = { email = it },
-                label = { Text("Email Address") },
-                modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(modifier = Modifier.height(12.dp))
-            OutlinedTextField(
-                value = password,
-                onValueChange = { password = it },
-                label = { Text("Password") },
-                visualTransformation = PasswordVisualTransformation(),
-                modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(modifier = Modifier.height(24.dp))
-            Button(
-                onClick = { if (email.isNotEmpty()) isLoggedIn = true },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Log In")
-            }
-        }
-    } else {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(24.dp),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(text = "Welcome, ${'$'}email!", style = MaterialTheme.typography.headlineSmall)
-            Spacer(modifier = Modifier.height(16.dp))
-            Button(onClick = { isLoggedIn = false }) {
-                Text("Log Out")
-            }
-        }
-    }
-}
-""".trimIndent()
-
-    private fun generateProjectWorkflow(appName: String): String = """
-name: Build Android App
+        // 13. GitHub Actions Workflow (.github/workflows/build-apk.yml)
+        files[".github/workflows/build-apk.yml"] = """
+name: Build Android APK
 
 on:
   push:
@@ -598,81 +537,81 @@ on:
   workflow_dispatch:
     inputs:
       clean:
-        description: 'Clean build (skip cache)'
+        description: 'Perform clean build'
         required: false
         default: 'false'
 
 permissions:
-  contents: write
+  contents: read
+  actions: read
 
 jobs:
   build:
-    name: Build APK and AAB
+    name: Build Debug APK & Release AAB
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
+          distribution: 'temurin'
           java-version: '17'
-          distribution: 'zulu'
-
-      - name: Ensure Gradle Wrapper
-        run: |
-          mkdir -p gradle/wrapper
-          curl -sSL -o gradle/wrapper/gradle-wrapper.jar https://raw.githubusercontent.com/gradle/gradle/v8.9.0/gradle/wrapper/gradle-wrapper.jar
-          chmod +x gradlew || true
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-          cache-disabled: ${'$'}{{ github.event.inputs.clean == 'true' }}
 
-      - name: Generate Official Gradle Wrapper
-        run: |
-          gradle wrapper --gradle-version 8.9 --distribution-type all
-          chmod +x gradlew
+      - name: Ensure Executable Gradlew
+        run: chmod +x gradlew || true
 
       - name: Build Debug APK
-        run: ./gradlew assembleDebug --no-daemon 2>&1 | tee build_log.txt
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
 
-      - name: Build Release Bundle
-        run: ./gradlew bundleRelease --no-daemon 2>&1 | tee -a build_log.txt || true
-        env:
-          KEYSTORE_BASE64: ${'$'}{{ secrets.KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${'$'}{{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${'$'}{{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${'$'}{{ secrets.KEY_PASSWORD }}
+      - name: Build Release Bundle (AAB)
+        run: ./gradlew bundleRelease --no-daemon --stacktrace || true
 
-      - name: Upload Debug APK
-        if: success()
+      - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: debug-apk
+          name: app-debug-apk
           path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
 
-      - name: Upload Release Bundle
-        if: success()
+      - name: Upload Release AAB Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: release-aab
+          name: app-release-aab
           path: app/build/outputs/bundle/release/*.aab
-
-      - name: Publish GitHub Release
-        if: success()
-        run: |
-          APK_PATH=${'$'}(ls app/build/outputs/apk/debug/*.apk 2>/dev/null | head -n 1)
-          if [ -n "${'$'}APK_PATH" ]; then
-            gh release create "latest" "${'$'}APK_PATH" \
-              --title "$appName Latest Build" \
-              --notes "Automated build from Kotlin IDE on Android." \
-              --clobber || gh release upload "latest" "${'$'}APK_PATH" --clobber || true
-          fi
-        env:
-          GH_TOKEN: ${'$'}{{ secrets.GITHUB_TOKEN }}
+          if-no-files-found: ignore
+          retention-days: 14
 """.trimIndent()
+
+        // 14. README.md
+        files["README.md"] = """
+# $appName
+
+$appName was built and generated directly using **Kotlin IDE on Android**.
+
+## Tech Stack
+- ${if (isViewsTemplate) "Classic Android Views with Material 3" else "Jetpack Compose with Material 3"}
+- Kotlin 2.0.21
+- Android Gradle Plugin 8.7.2
+- Minimum SDK: $minSdk
+- Target SDK: $targetSdk
+
+## Build Instructions
+This repository includes a GitHub Actions CI/CD workflow (`.github/workflows/build-apk.yml`) that automatically compiles:
+1. **Debug APK**: Installable directly on any Android device.
+2. **Release AAB**: Android App Bundle ready for Google Play Console.
+
+Trigger the build anytime via **Kotlin IDE** on your phone or in the **Actions** tab on GitHub!
+""".trimIndent()
+
+        return files
+    }
 }
