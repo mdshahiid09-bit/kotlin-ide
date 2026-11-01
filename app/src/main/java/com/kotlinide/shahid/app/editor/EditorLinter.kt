@@ -98,11 +98,12 @@ object EditorLinter {
             val line = rawLine.trim()
             if (line.startsWith("<!--") || line.startsWith("<?xml")) return@forEachIndexed
 
-            val tagPattern = Regex("""<(/)?([a-zA-Z0-9_.:-]+)([^>]*)(/)?>""")
+            val tagPattern = Regex("""<(/)?([a-zA-Z0-9_.:-]+)([^>]*)>""")
             for (match in tagPattern.findAll(rawLine)) {
                 val isClosing = match.groupValues[1] == "/"
                 val tagName = match.groupValues[2]
-                val isSelfClosing = match.groupValues[4] == "/"
+                val attrPart = match.groupValues[3]
+                val isSelfClosing = attrPart.trimEnd().endsWith("/") || match.value.trimEnd().endsWith("/>")
 
                 if (isSelfClosing) {
                     continue
