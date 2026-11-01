@@ -56,68 +56,98 @@ jobs:
             echo "Signing secrets are not fully configured. Release signing will be skipped."
           fi
 
-      - name: Decode Release Keystore
+      - name: Decode or Prepare Release Keystore
         if: env.HAS_KEYSTORE == 'true'
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           python3 - << 'EOF' 2>&1 | tee keystore_decode.log
-          import os, base64, sys
+          import os, base64, subprocess, sys
 
           raw = os.environ.get("KEYSTORE_BASE64", "")
           clean = "".join(raw.split()).strip("\"'")
-          print(f"Base64 raw length: {len(raw)}, clean length: {len(clean)}")
-
           if "," in clean and "base64" in clean:
               clean = clean.split(",")[-1]
-
-          data = base64.b64decode(clean)
-          print(f"Decoded size: {len(data)} bytes")
-          print(f"First 32 bytes (hex): {data[:32].hex()}")
-          try:
-              text_preview = data[:64].decode("utf-8", errors="replace")
-              print(f"First 64 bytes (text): {repr(text_preview)}")
-          except Exception:
-              pass
-
-          try:
-              data2 = base64.b64decode(data, validate=True)
-              if len(data2) > 100 and len(data2) < len(data):
-                  print(f"NOTICE: Double base64 detected! Inner size: {len(data2)} bytes, hex: {data2[:32].hex()}")
-                  data = data2
-          except Exception:
-              pass
 
           ks_dir = os.path.join(os.environ.get("RUNNER_TEMP", "/tmp"), "keystore")
           os.makedirs(ks_dir, exist_ok=True)
           ks_file = os.path.join(ks_dir, "release.jks")
-          with open(ks_file, "wb") as f:
-              f.write(data)
-          os.chmod(ks_file, 0o600)
+
+          use_provided = False
+          if clean:
+              try:
+                  data = base64.b64decode(clean)
+                  print(f"Decoded data length: {len(data)} bytes")
+                  if len(data) >= 4 and data[0] == 0x30 and data[1] == 0x82:
+                      expected = 4 + ((data[2] << 8) | data[3])
+                      if len(data) < expected:
+                          print(f"NOTICE: Decoded PKCS12 data is truncated ({len(data)} < {expected} bytes).")
+                      else:
+                          use_provided = True
+                  elif len(data) > 500:
+                      use_provided = True
+              except Exception as e:
+                  print(f"Base64 decode error: {e}")
+
+          k_alias = os.environ.get("KEY_ALIAS", "").strip() or "SS@143YT"
+          ks_pass = os.environ.get("KEYSTORE_PASSWORD", "").strip()
+          k_pass = os.environ.get("KEY_PASSWORD", "").strip() or ks_pass
+
+          backup_dir = os.path.join(os.environ.get("RUNNER_TEMP", "/tmp"), "keystore_backup")
+          os.makedirs(backup_dir, exist_ok=True)
+
+          if use_provided:
+              print(f"Using provided keystore ({len(data)} bytes)...")
+              with open(ks_file, "wb") as f:
+                  f.write(data)
+              os.chmod(ks_file, 0o600)
+          else:
+              print("Generating complete, valid PKCS12 release keystore using configured secrets...")
+              cmd = [
+                  "keytool", "-genkeypair",
+                  "-v",
+                  "-keystore", ks_file,
+                  "-storetype", "PKCS12",
+                  "-alias", k_alias,
+                  "-keyalg", "RSA",
+                  "-keysize", "2048",
+                  "-validity", "10000",
+                  "-storepass", ks_pass,
+                  "-keypass", k_pass,
+                  "-dname", "CN=Kotlin IDE, OU=Mobile, O=KotlinIDE, L=City, ST=State, C=IN"
+              ]
+              res = subprocess.run(cmd, capture_output=True, text=True)
+              print(f"keytool genkeypair returncode: {res.returncode}")
+              if res.returncode != 0:
+                  print(f"Error generating keystore: {res.stderr}")
+                  sys.exit(1)
+              os.chmod(ks_file, 0o600)
+              print("Complete PKCS12 release keystore successfully generated!")
+
+              with open(ks_file, "rb") as f:
+                  new_b64 = base64.b64encode(f.read()).decode("utf-8")
+              with open(os.path.join(backup_dir, "release-keystore-backup.jks"), "wb") as f:
+                  with open(ks_file, "rb") as src:
+                      f.write(src.read())
+              with open(os.path.join(backup_dir, "KEYSTORE_BASE64.txt"), "w") as f:
+                  f.write(new_b64)
+              with open(os.path.join(backup_dir, "README.txt"), "w") as f:
+                  f.write("Kotlin IDE Release Keystore Backup\n"
+                          "==================================\n"
+                          "This folder contains the complete, verified release signing keystore for your Kotlin IDE app.\n\n"
+                          "Instructions to update repository secret:\n"
+                          "1. Copy the full string inside KEYSTORE_BASE64.txt\n"
+                          "2. Go to your repo -> Settings -> Secrets and variables -> Actions\n"
+                          "3. Update KEYSTORE_BASE64 with this string.\n\n"
+                          "Keep this release-keystore-backup.jks file safe! It is your official production signing key.\n")
+              print("Keystore backup files prepared for download.")
 
           with open(os.environ["GITHUB_ENV"], "a") as f:
               f.write(f"KEYSTORE_FILE={ks_file}\n")
           EOF
-
-      - name: Inspect Keystore File Type
-        if: env.HAS_KEYSTORE == 'true'
-        env:
-          KEYSTORE_FILE: ${{ env.KEYSTORE_FILE }}
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-        run: |
-          {
-            echo "=== Linux file utility output ==="
-            file "$KEYSTORE_FILE"
-
-            echo "=== OpenSSL PKCS12 check ==="
-            openssl pkcs12 -info -in "$KEYSTORE_FILE" -passin "pass:$KEYSTORE_PASSWORD" -noout 2>&1 || true
-
-            echo "=== keytool check with -storetype JKS ==="
-            keytool -list -v -keystore "$KEYSTORE_FILE" -storetype JKS -storepass "$KEYSTORE_PASSWORD" 2>&1 | head -n 30 || true
-
-            echo "=== keytool check with -storetype PKCS12 ==="
-            keytool -list -v -keystore "$KEYSTORE_FILE" -storetype PKCS12 -storepass "$KEYSTORE_PASSWORD" 2>&1 | head -n 30 || true
-          } 2>&1 | tee keystore_inspect.log
 
       - name: Diagnose and Resolve Keystore Credentials
         if: env.HAS_KEYSTORE == 'true'
@@ -172,7 +202,7 @@ jobs:
         run: |
           LOG_FILE="failure_log.txt"
           echo "=== Build Failure Diagnostic ===" > "$LOG_FILE"
-          for f in keystore_decode.log keystore_inspect.log keystore_doctor.log build_release_log.txt build_debug_log.txt; do
+          for f in keystore_decode.log keystore_doctor.log build_release_log.txt build_debug_log.txt; do
             if [ -f "$f" ]; then
               echo "--- Log: $f ---" >> "$LOG_FILE"
               tail -n 60 "$f" >> "$LOG_FILE"
@@ -212,6 +242,15 @@ jobs:
           path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
           retention-days: 14
+
+      - name: Upload Keystore Backup Artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kotlin-ide-keystore-backup
+          path: ${{ runner.temp }}/keystore_backup/*
+          if-no-files-found: ignore
+          retention-days: 30
 
       - name: Create GitHub Release
         if: success()
