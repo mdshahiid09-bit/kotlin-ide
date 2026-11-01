@@ -3,12 +3,14 @@ package com.kotlinide.shahid.app.ui.screens.editor
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -17,13 +19,18 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Redo
-import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Redo
+import androidx.compose.material.icons.filled.Undo
+import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.FindReplace
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FormatAlignLeft
 import androidx.compose.material.icons.filled.History
@@ -41,6 +48,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.ScrollableTabRow
@@ -79,12 +87,13 @@ import com.kotlinide.shahid.app.data.security.TokenStorage
 import com.kotlinide.shahid.app.data.storage.ProjectStorage
 import com.kotlinide.shahid.app.ui.screens.build.BuildLogPanel
 import com.kotlinide.shahid.app.ui.theme.DarkBackground
+import com.kotlinide.shahid.app.ui.theme.DarkBorder
 import com.kotlinide.shahid.app.ui.theme.DarkSurface
+import com.kotlinide.shahid.app.ui.theme.DarkSurfaceHighlight
 import com.kotlinide.shahid.app.ui.theme.DarkSurfaceVariant
 import com.kotlinide.shahid.app.ui.theme.DarkTextPrimary
 import com.kotlinide.shahid.app.ui.theme.DarkTextSecondary
 import com.kotlinide.shahid.app.ui.theme.NeonGreen
-import com.kotlinide.shahid.app.ui.theme.OrangeWarning
 import com.kotlinide.shahid.app.ui.theme.RedError
 import com.kotlinide.shahid.app.util.NotificationHelper
 import kotlinx.coroutines.delay
@@ -493,10 +502,10 @@ fun EditorScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         IconButton(onClick = { activeTab.undo() }, modifier = Modifier.size(32.dp)) {
-                            Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "Undo", modifier = Modifier.size(18.dp))
+                            Icon(Icons.Default.Undo, contentDescription = "Undo", modifier = Modifier.size(18.dp))
                         }
                         IconButton(onClick = { activeTab.redo() }, modifier = Modifier.size(32.dp)) {
-                            Icon(Icons.AutoMirrored.Filled.Redo, contentDescription = "Redo", modifier = Modifier.size(18.dp))
+                            Icon(Icons.Default.Redo, contentDescription = "Redo", modifier = Modifier.size(18.dp))
                         }
                         IconButton(
                             onClick = {

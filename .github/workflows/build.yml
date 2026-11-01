@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
+  issues: write
 
 jobs:
   build:
@@ -22,14 +24,8 @@ jobs:
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
+          distribution: 'temurin'
           java-version: '17'
-          distribution: 'zulu'
-
-      - name: Ensure Gradle Wrapper
-        run: |
-          mkdir -p gradle/wrapper
-          curl -sSL -o gradle/wrapper/gradle-wrapper.jar https://raw.githubusercontent.com/gradle/gradle/v8.9.0/gradle/wrapper/gradle-wrapper.jar
-          chmod +x gradlew || true
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -47,8 +43,27 @@ jobs:
       - name: Build Debug APK
         id: assemble
         run: |
-          chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon 2>&1 | tee build_log.txt
+          set -o pipefail
+          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee build_log.txt
+
+      - name: Report Failure Diagnostic
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -f build_log.txt ]; then
+            if grep -q "^e: " build_log.txt; then
+              grep -C 2 "^e: " build_log.txt | head -n 80 > log_summary.txt
+            else
+              tail -n 80 build_log.txt > log_summary.txt
+            fi
+          else
+            echo "No build_log.txt found" > log_summary.txt
+          fi
+          gh issue create --title "Build Diagnostic #${{ github.run_number }}" --body "Automated build failure log:
+          \`\`\`
+          $(cat log_summary.txt)
+          \`\`\`" || true
 
       - name: Upload Debug APK Artifact
         if: success()
@@ -59,24 +74,16 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Publish GitHub Release
+      - name: Create GitHub Release
         if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           APK_PATH=$(ls app/build/outputs/apk/debug/*.apk 2>/dev/null | head -n 1)
           echo "Found APK at: $APK_PATH"
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          gh release create "v1.0.0" "$APK_PATH" \
-            --title "Kotlin IDE v1.0.0 Debug APK" \
-            --notes "Automated GitHub Actions build of Kotlin IDE Android application. Direct download installable debug APK." \
-            --clobber || gh release upload "v1.0.0" "$APK_PATH" --clobber || true
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Capture Failure Log
-        if: failure()
-        run: |
-          echo "### Build Failure Summary" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          grep -E "(e: |error:|Unresolved reference|Compilation error)" build_log.txt | head -n 40 >> $GITHUB_STEP_SUMMARY || cat build_log.txt | tail -n 40 >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          cp "$APK_PATH" KotlinIDE-debug.apk
+          RELEASE_TAG="v1.0.0-build-${{ github.run_number }}"
+          gh release create "$RELEASE_TAG" KotlinIDE-debug.apk \
+            --title "Kotlin IDE Release #${{ github.run_number }}" \
+            --notes "Kotlin IDE Debug APK. Ready to install on Android phone." \
+            --latest
