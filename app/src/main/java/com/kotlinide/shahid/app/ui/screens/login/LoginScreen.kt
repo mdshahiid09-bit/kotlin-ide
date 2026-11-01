@@ -34,6 +34,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.kotlinide.shahid.app.data.api.GitHubApiException
 import com.kotlinide.shahid.app.data.api.GitHubApiService
 import com.kotlinide.shahid.app.data.security.TokenStorage
 import com.kotlinide.shahid.app.data.storage.AppPreferences
@@ -141,10 +142,11 @@ fun LoginScreen(
 
             Button(
                 onClick = {
-                    if (tokenInput.isNotBlank()) {
+                    val cleanToken = TokenStorage.cleanToken(tokenInput)
+                    if (cleanToken.isNotBlank()) {
                         isLoading = true
                         errorMessage = null
-                        tokenStorage.saveToken(tokenInput)
+                        tokenStorage.saveToken(cleanToken)
                         coroutineScope.launch {
                             val res = apiService.validateToken()
                             isLoading = false
@@ -153,7 +155,11 @@ fun LoginScreen(
                                 onLoginSuccess()
                             }.onFailure { err ->
                                 tokenStorage.clearToken()
-                                errorMessage = err.message ?: "Invalid or expired token."
+                                errorMessage = if (err is GitHubApiException) {
+                                    err.userFriendlyMessage
+                                } else {
+                                    err.message ?: "Invalid or expired token."
+                                }
                             }
                         }
                     } else {

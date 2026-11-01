@@ -1,6 +1,12 @@
 package com.kotlinide.shahid.app.ui.screens.projects.wizard
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -21,11 +27,13 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CropSquare
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.ViewQuilt
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -54,11 +62,16 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.kotlinide.shahid.app.data.api.GitHubApiException
 import com.kotlinide.shahid.app.data.api.GitHubApiService
 import com.kotlinide.shahid.app.data.model.Project
 import com.kotlinide.shahid.app.data.model.ProjectTemplate
@@ -66,8 +79,10 @@ import com.kotlinide.shahid.app.data.security.TokenStorage
 import com.kotlinide.shahid.app.data.storage.AppPreferences
 import com.kotlinide.shahid.app.data.storage.ProjectStorage
 import com.kotlinide.shahid.app.data.templates.TemplateProvider
+import com.kotlinide.shahid.app.ui.theme.DarkBackground
 import com.kotlinide.shahid.app.ui.theme.DarkSurface
 import com.kotlinide.shahid.app.ui.theme.NeonGreen
+import com.kotlinide.shahid.app.util.IconGenerator
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.UUID
@@ -97,9 +112,35 @@ fun NewProjectWizardScreen(
     var targetSdk by remember { mutableIntStateOf(35) }
     var isPrivateRepo by remember { mutableStateOf(true) }
 
+    // Step 3 App Icon state
+    var iconUri by remember { mutableStateOf<Uri?>(null) }
+    var iconBitmap by remember { mutableStateOf<Bitmap?>(null) }
+
     var isCreating by remember { mutableStateOf(false) }
     var statusText by remember { mutableStateOf("") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var errorRawDetails by remember { mutableStateOf<String?>(null) }
+    var isDetailsExpanded by remember { mutableStateOf(false) }
+
+    val imagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            try {
+                val inputStream = context.contentResolver.openInputStream(uri)
+                val bitmap = BitmapFactory.decodeStream(inputStream)
+                inputStream?.close()
+                if (bitmap != null) {
+                    iconBitmap = bitmap
+                    iconUri = uri
+                } else {
+                    Toast.makeText(context, "Could not decode PNG image", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                Toast.makeText(context, "Failed to load image: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -142,7 +183,9 @@ fun NewProjectWizardScreen(
                             } else {
                                 isCreating = true
                                 errorMessage = null
-                                statusText = "Creating GitHub repository..."
+                                errorRawDetails = null
+                                isDetailsExpanded = false
+                                statusText = "Verifying GitHub credentials..."
                                 val vCode = versionCodeInput.toIntOrNull() ?: 1
                                 val projectId = UUID.randomUUID().toString()
                                 val cleanRepoName = appName.replace(Regex("[^a-zA-Z0-9_-]"), "-")
@@ -156,7 +199,14 @@ fun NewProjectWizardScreen(
 
                                     if (repoRes.isFailure) {
                                         isCreating = false
-                                        errorMessage = repoRes.exceptionOrNull()?.message ?: "Failed to create GitHub repository"
+                                        val ex = repoRes.exceptionOrNull()
+                                        if (ex is GitHubApiException) {
+                                            errorMessage = ex.userFriendlyMessage
+                                            errorRawDetails = ex.rawResponse
+                                        } else {
+                                            errorMessage = ex?.message ?: "Failed to create GitHub repository"
+                                            errorRawDetails = null
+                                        }
                                         return@launch
                                     }
 
@@ -170,14 +220,22 @@ fun NewProjectWizardScreen(
                                         versionCode = vCode,
                                         templateId = selectedTemplateId,
                                         minSdk = minSdk,
-                                        targetSdk = targetSdk
+                                        targetSdk = targetSdk,
+                                        hasCustomIcon = (iconBitmap != null)
                                     )
+
+                                    val mipmapFiles = IconGenerator.generateMipmapIcons(iconBitmap)
 
                                     val projectDir = projectStorage.getProjectDirectory(projectId)
                                     files.forEach { (relPath, content) ->
                                         val f = File(projectDir, relPath)
                                         f.parentFile?.mkdirs()
                                         f.writeText(content)
+                                    }
+                                    mipmapFiles.forEach { (relPath, bytes) ->
+                                        val f = File(projectDir, relPath)
+                                        f.parentFile?.mkdirs()
+                                        f.writeBytes(bytes)
                                     }
 
                                     for ((relPath, content) in files) {
@@ -186,6 +244,16 @@ fun NewProjectWizardScreen(
                                             repo = repo.name,
                                             path = relPath,
                                             contentString = content,
+                                            message = "Add $relPath"
+                                        )
+                                    }
+
+                                    for ((relPath, bytes) in mipmapFiles) {
+                                        apiService.createOrUpdateBinaryFile(
+                                            owner = repo.owner.login,
+                                            repo = repo.name,
+                                            path = relPath,
+                                            bytes = bytes,
                                             message = "Add $relPath"
                                         )
                                     }
@@ -360,19 +428,79 @@ fun NewProjectWizardScreen(
                 3 -> {
                     Text("3. App Icon & Confirmation", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     Spacer(modifier = Modifier.height(6.dp))
-                    Text("Standard adaptive mipmap icons will be configured automatically.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        "Upload a PNG icon or use the default icon. All mipmap densities (mdpi, hdpi, xhdpi, xxhdpi, xxxhdpi) will be generated automatically.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
 
                     Spacer(modifier = Modifier.height(20.dp))
 
-                    Box(
-                        modifier = Modifier
-                            .size(80.dp)
-                            .background(DarkSurface, RoundedCornerShape(20.dp))
-                            .border(2.dp, NeonGreen, RoundedCornerShape(20.dp))
-                            .align(Alignment.CenterHorizontally),
-                        contentAlignment = Alignment.Center
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Icon(Icons.Default.Android, contentDescription = null, tint = NeonGreen, modifier = Modifier.size(44.dp))
+                        Box(
+                            modifier = Modifier
+                                .size(96.dp)
+                                .background(DarkSurface, RoundedCornerShape(22.dp))
+                                .border(2.dp, NeonGreen, RoundedCornerShape(22.dp)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (iconBitmap != null) {
+                                Image(
+                                    bitmap = iconBitmap!!.asImageBitmap(),
+                                    contentDescription = "Custom App Icon",
+                                    modifier = Modifier
+                                        .size(96.dp)
+                                        .clip(RoundedCornerShape(22.dp)),
+                                    contentScale = ContentScale.Crop
+                                )
+                            } else {
+                                Icon(
+                                    Icons.Default.Android,
+                                    contentDescription = null,
+                                    tint = NeonGreen,
+                                    modifier = Modifier.size(54.dp)
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedButton(
+                                onClick = { imagePickerLauncher.launch("image/png") },
+                                enabled = !isCreating
+                            ) {
+                                Icon(Icons.Default.AddPhotoAlternate, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(if (iconBitmap != null) "Change PNG" else "Upload PNG Icon")
+                            }
+
+                            if (iconBitmap != null) {
+                                OutlinedButton(
+                                    onClick = {
+                                        iconBitmap = null
+                                        iconUri = null
+                                    },
+                                    enabled = !isCreating
+                                ) {
+                                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Reset")
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = if (iconBitmap != null) "Custom PNG selected" else "Using default developer neon icon",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (iconBitmap != null) NeonGreen else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
 
                     Spacer(modifier = Modifier.height(20.dp))
@@ -384,7 +512,7 @@ fun NewProjectWizardScreen(
                         Column(modifier = Modifier.padding(16.dp)) {
                             Text("Project Summary:", fontWeight = FontWeight.Bold)
                             Spacer(modifier = Modifier.height(6.dp))
-                            Text("• Name: $appName\n• Package: $packageName\n• Version: $versionName ($versionCodeInput)\n• Visibility: ${if (isPrivateRepo) "Private" else "Public"}\n• Cloud CI/CD: Automated GitHub Actions workflow")
+                            Text("• Name: $appName\n• Package: $packageName\n• Version: $versionName ($versionCodeInput)\n• Visibility: ${if (isPrivateRepo) "Private" else "Public"}\n• Icon: ${if (iconBitmap != null) "Custom PNG (Auto-Mipmaps)" else "Default Adaptive"}\n• Cloud CI/CD: Automated GitHub Actions workflow")
                         }
                     }
 
@@ -398,8 +526,65 @@ fun NewProjectWizardScreen(
                     }
 
                     if (errorMessage != null) {
-                        Spacer(modifier = Modifier.height(14.dp))
-                        Text(errorMessage!!, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Card(
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f)
+                            ),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(14.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        Icons.Default.ErrorOutline,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = errorMessage!!,
+                                        color = MaterialTheme.colorScheme.error,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+
+                                if (!errorRawDetails.isNullOrBlank()) {
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                    Row(
+                                        modifier = Modifier
+                                            .clickable { isDetailsExpanded = !isDetailsExpanded }
+                                            .padding(vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = if (isDetailsExpanded) "Hide details ▲" else "Show details ▼",
+                                            color = NeonGreen,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+
+                                    if (isDetailsExpanded) {
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .background(DarkBackground, RoundedCornerShape(6.dp))
+                                                .padding(10.dp)
+                                        ) {
+                                            Text(
+                                                text = errorRawDetails!!,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

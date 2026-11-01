@@ -3,6 +3,12 @@ package com.kotlinide.shahid.app.data.api
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
+class GitHubApiException(
+    val statusCode: Int,
+    val userFriendlyMessage: String,
+    val rawResponse: String? = null
+) : Exception(userFriendlyMessage)
+
 @Serializable
 data class GitHubUser(
     val login: String,

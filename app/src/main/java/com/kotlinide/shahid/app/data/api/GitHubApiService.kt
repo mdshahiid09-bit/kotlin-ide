@@ -32,8 +32,12 @@ class GitHubApiService(private val tokenStorage: TokenStorage) {
 
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 
+    private fun cleanCurrentToken(): String {
+        return tokenStorage.getToken()?.let { TokenStorage.cleanToken(it) }.orEmpty()
+    }
+
     private fun newRequestBuilder(url: String): Request.Builder {
-        val token = tokenStorage.getToken() ?: ""
+        val token = cleanCurrentToken()
         return Request.Builder()
             .url(url)
             .header("Authorization", "Bearer $token")
@@ -42,25 +46,58 @@ class GitHubApiService(private val tokenStorage: TokenStorage) {
             .header("User-Agent", "Kotlin-IDE-Android-Client")
     }
 
+    private fun mapGitHubError(statusCode: Int, rawBody: String?): GitHubApiException {
+        val message = when (statusCode) {
+            401 -> "GitHub token invalid ya expired hai. Naya token banakar daalo."
+            403 -> "Token mein repo banane ki permission nahi hai."
+            else -> "GitHub API Error (HTTP $statusCode)"
+        }
+        return GitHubApiException(
+            statusCode = statusCode,
+            userFriendlyMessage = message,
+            rawResponse = rawBody
+        )
+    }
+
     suspend fun validateToken(): Result<GitHubUser> = withContext(Dispatchers.IO) {
-        val request = newRequestBuilder("https://api.github.com/user").get().build()
+        val token = cleanCurrentToken()
+        if (token.isBlank()) {
+            return@withContext Result.failure(
+                GitHubApiException(
+                    statusCode = 401,
+                    userFriendlyMessage = "GitHub token invalid ya expired hai. Naya token banakar daalo.",
+                    rawResponse = "{\"message\":\"Token is empty\"}"
+                )
+            )
+        }
+
+        val request = Request.Builder()
+            .url("https://api.github.com/user")
+            .header("Authorization", "Bearer $token")
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .header("User-Agent", "Kotlin-IDE-Android-Client")
+            .get()
+            .build()
+
         try {
             client.newCall(request).execute().use { response ->
-                if (response.isSuccessful) {
-                    val body = response.body?.string().orEmpty()
+                val body = response.body?.string().orEmpty()
+                if (response.code == 200) {
                     val user = json.decodeFromString<GitHubUser>(body)
                     Result.success(user)
                 } else {
-                    val errorMsg = when (response.code) {
-                        401 -> "Invalid or expired GitHub Personal Access Token. Please re-enter a valid token with 'repo' and 'workflow' scopes."
-                        403 -> "API rate limit exceeded or insufficient permissions."
-                        else -> "GitHub API Error: HTTP ${response.code}"
-                    }
-                    Result.failure(Exception(errorMsg))
+                    Result.failure(mapGitHubError(response.code, body))
                 }
             }
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(
+                GitHubApiException(
+                    statusCode = 0,
+                    userFriendlyMessage = "Network error: ${e.message ?: "Failed to connect to GitHub"}",
+                    rawResponse = e.stackTraceToString()
+                )
+            )
         }
     }
 
@@ -69,6 +106,48 @@ class GitHubApiService(private val tokenStorage: TokenStorage) {
         description: String = "Built with Kotlin IDE on Android",
         isPrivate: Boolean = true
     ): Result<GitHubRepoResponse> = withContext(Dispatchers.IO) {
+        val token = cleanCurrentToken()
+        if (token.isBlank()) {
+            return@withContext Result.failure(
+                GitHubApiException(
+                    statusCode = 401,
+                    userFriendlyMessage = "GitHub token invalid ya expired hai. Naya token banakar daalo.",
+                    rawResponse = "{\"message\":\"No token provided\"}"
+                )
+            )
+        }
+
+        // Step 1: Verify token by calling GET https://api.github.com/user
+        // with "Authorization: Bearer <token>" and "Accept: application/vnd.github+json"
+        val verifyRequest = Request.Builder()
+            .url("https://api.github.com/user")
+            .header("Authorization", "Bearer $token")
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .header("User-Agent", "Kotlin-IDE-Android-Client")
+            .get()
+            .build()
+
+        try {
+            client.newCall(verifyRequest).execute().use { verifyResponse ->
+                val verifyBody = verifyResponse.body?.string().orEmpty()
+                if (verifyResponse.code != 200) {
+                    // Only continue to POST if GET /user returns 200
+                    val err = mapGitHubError(verifyResponse.code, verifyBody)
+                    return@withContext Result.failure(err)
+                }
+            }
+        } catch (e: Exception) {
+            return@withContext Result.failure(
+                GitHubApiException(
+                    statusCode = 0,
+                    userFriendlyMessage = "Network error: ${e.message ?: "Failed to connect to GitHub"}",
+                    rawResponse = e.stackTraceToString()
+                )
+            )
+        }
+
+        // Step 2: Token is verified (HTTP 200). Now POST https://api.github.com/user/repos
         val reqBody = CreateRepoRequest(
             name = name,
             description = description,
@@ -76,22 +155,34 @@ class GitHubApiService(private val tokenStorage: TokenStorage) {
             autoInit = false
         )
         val bodyString = json.encodeToString(reqBody)
-        val request = newRequestBuilder("https://api.github.com/user/repos")
+        val createRequest = Request.Builder()
+            .url("https://api.github.com/user/repos")
+            .header("Authorization", "Bearer $token")
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .header("User-Agent", "Kotlin-IDE-Android-Client")
             .post(bodyString.toRequestBody(jsonMediaType))
             .build()
 
         try {
-            client.newCall(request).execute().use { response ->
+            client.newCall(createRequest).execute().use { response ->
                 val respBody = response.body?.string().orEmpty()
-                if (response.isSuccessful) {
+                if (response.isSuccessful || response.code == 201) {
                     val repo = json.decodeFromString<GitHubRepoResponse>(respBody)
                     Result.success(repo)
                 } else {
-                    Result.failure(Exception("Failed to create repository: HTTP ${response.code} - $respBody"))
+                    val err = mapGitHubError(response.code, respBody)
+                    Result.failure(err)
                 }
             }
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(
+                GitHubApiException(
+                    statusCode = 0,
+                    userFriendlyMessage = "Network error: ${e.message ?: "Failed to connect to GitHub"}",
+                    rawResponse = e.stackTraceToString()
+                )
+            )
         }
     }
 
@@ -104,7 +195,44 @@ class GitHubApiService(private val tokenStorage: TokenStorage) {
                 if (response.isSuccessful || response.code == 204) {
                     Result.success(true)
                 } else {
-                    Result.failure(Exception("Failed to delete repository: HTTP ${response.code}"))
+                    val respBody = response.body?.string().orEmpty()
+                    Result.failure(mapGitHubError(response.code, respBody))
+                }
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun createOrUpdateBinaryFile(
+        owner: String,
+        repo: String,
+        path: String,
+        bytes: ByteArray,
+        message: String = "Add $path",
+        branch: String = "main",
+        sha: String? = null
+    ): Result<FileContentResponse> = withContext(Dispatchers.IO) {
+        val base64Content = Base64.encodeToString(bytes, Base64.NO_WRAP)
+        val reqBody = FileContentRequest(
+            message = message,
+            content = base64Content,
+            branch = branch,
+            sha = sha
+        )
+        val bodyString = json.encodeToString(reqBody)
+        val request = newRequestBuilder("https://api.github.com/repos/$owner/$repo/contents/$path")
+            .put(bodyString.toRequestBody(jsonMediaType))
+            .build()
+
+        try {
+            client.newCall(request).execute().use { response ->
+                val respBody = response.body?.string().orEmpty()
+                if (response.isSuccessful || response.code == 200 || response.code == 201) {
+                    val res = json.decodeFromString<FileContentResponse>(respBody)
+                    Result.success(res)
+                } else {
+                    Result.failure(mapGitHubError(response.code, respBody))
                 }
             }
         } catch (e: Exception) {
@@ -120,33 +248,15 @@ class GitHubApiService(private val tokenStorage: TokenStorage) {
         message: String = "Update $path",
         branch: String = "main",
         sha: String? = null
-    ): Result<FileContentResponse> = withContext(Dispatchers.IO) {
-        val base64Content = Base64.encodeToString(contentString.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
-        val reqBody = FileContentRequest(
-            message = message,
-            content = base64Content,
-            branch = branch,
-            sha = sha
-        )
-        val bodyString = json.encodeToString(reqBody)
-        val request = newRequestBuilder("https://api.github.com/repos/$owner/$repo/contents/$path")
-            .put(bodyString.toRequestBody(jsonMediaType))
-            .build()
-
-        try {
-            client.newCall(request).execute().use { response ->
-                val respBody = response.body?.string().orEmpty()
-                if (response.isSuccessful) {
-                    val res = json.decodeFromString<FileContentResponse>(respBody)
-                    Result.success(res)
-                } else {
-                    Result.failure(Exception("Failed to commit $path: HTTP ${response.code} - $respBody"))
-                }
-            }
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
-    }
+    ): Result<FileContentResponse> = createOrUpdateBinaryFile(
+        owner = owner,
+        repo = repo,
+        path = path,
+        bytes = contentString.toByteArray(Charsets.UTF_8),
+        message = message,
+        branch = branch,
+        sha = sha
+    )
 
     suspend fun getFileContent(
         owner: String,
@@ -167,7 +277,8 @@ class GitHubApiService(private val tokenStorage: TokenStorage) {
                     val decoded = String(Base64.decode(rawBase64, Base64.DEFAULT), Charsets.UTF_8)
                     Result.success(decoded)
                 } else {
-                    Result.failure(Exception("File not found: HTTP ${response.code}"))
+                    val respBody = response.body?.string().orEmpty()
+                    Result.failure(mapGitHubError(response.code, respBody))
                 }
             }
         } catch (e: Exception) {
@@ -191,7 +302,8 @@ class GitHubApiService(private val tokenStorage: TokenStorage) {
                     val treeResp = json.decodeFromString<GitTreeResponse>(respBody)
                     Result.success(treeResp.tree)
                 } else {
-                    Result.failure(Exception("Failed to fetch tree: HTTP ${response.code}"))
+                    val respBody = response.body?.string().orEmpty()
+                    Result.failure(mapGitHubError(response.code, respBody))
                 }
             }
         } catch (e: Exception) {
@@ -219,7 +331,7 @@ class GitHubApiService(private val tokenStorage: TokenStorage) {
                     Result.success(true)
                 } else {
                     val err = response.body?.string().orEmpty()
-                    Result.failure(Exception("Failed to trigger build: HTTP ${response.code} - $err"))
+                    Result.failure(mapGitHubError(response.code, err))
                 }
             }
         } catch (e: Exception) {
@@ -239,7 +351,8 @@ class GitHubApiService(private val tokenStorage: TokenStorage) {
                     val runs = json.decodeFromString<WorkflowRunsResponse>(body)
                     Result.success(runs.workflowRuns)
                 } else {
-                    Result.failure(Exception("Failed to fetch workflow runs: HTTP ${response.code}"))
+                    val body = response.body?.string().orEmpty()
+                    Result.failure(mapGitHubError(response.code, body))
                 }
             }
         } catch (e: Exception) {
@@ -259,7 +372,8 @@ class GitHubApiService(private val tokenStorage: TokenStorage) {
                     val run = json.decodeFromString<WorkflowRun>(body)
                     Result.success(run)
                 } else {
-                    Result.failure(Exception("Failed to fetch run: HTTP ${response.code}"))
+                    val body = response.body?.string().orEmpty()
+                    Result.failure(mapGitHubError(response.code, body))
                 }
             }
         } catch (e: Exception) {
@@ -275,7 +389,8 @@ class GitHubApiService(private val tokenStorage: TokenStorage) {
         try {
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
-                    return@withContext Result.failure(Exception("HTTP ${response.code} fetching logs"))
+                    val body = response.body?.string().orEmpty()
+                    return@withContext Result.failure(mapGitHubError(response.code, body))
                 }
                 val inputStream = response.body?.byteStream()
                     ?: return@withContext Result.failure(Exception("Empty log body"))
@@ -314,7 +429,8 @@ class GitHubApiService(private val tokenStorage: TokenStorage) {
                     val res = json.decodeFromString<ArtifactsResponse>(body)
                     Result.success(res.artifacts)
                 } else {
-                    Result.failure(Exception("Failed to fetch artifacts: HTTP ${response.code}"))
+                    val body = response.body?.string().orEmpty()
+                    Result.failure(mapGitHubError(response.code, body))
                 }
             }
         } catch (e: Exception) {
@@ -334,7 +450,8 @@ class GitHubApiService(private val tokenStorage: TokenStorage) {
                     }
                     Result.success(destinationFile)
                 } else {
-                    Result.failure(Exception("Download failed: HTTP ${response.code}"))
+                    val body = response.body?.string().orEmpty()
+                    Result.failure(mapGitHubError(response.code, body))
                 }
             }
         } catch (e: Exception) {

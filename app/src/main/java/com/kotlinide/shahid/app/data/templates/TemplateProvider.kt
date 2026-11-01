@@ -9,7 +9,8 @@ object TemplateProvider {
         versionCode: Int,
         templateId: String,
         minSdk: Int,
-        targetSdk: Int
+        targetSdk: Int,
+        hasCustomIcon: Boolean = false
     ): Map<String, String> {
         val files = mutableMapOf<String, String>()
 
@@ -114,20 +115,6 @@ android {
         }
     }
 
-    signingConfigs {
-        create("release") {
-            val keystoreBase64 = System.getenv("KEYSTORE_BASE64")
-            if (!keystoreBase64.isNullOrEmpty()) {
-                val keystoreFile = file("release.keystore")
-                keystoreFile.writeBytes(java.util.Base64.getDecoder().decode(keystoreBase64))
-                storeFile = keystoreFile
-                storePassword = System.getenv("KEYSTORE_PASSWORD") ?: ""
-                keyAlias = System.getenv("KEY_ALIAS") ?: "upload"
-                keyPassword = System.getenv("KEY_PASSWORD") ?: ""
-            }
-        }
-    }
-
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -135,13 +122,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            val keystoreBase64 = System.getenv("KEYSTORE_BASE64")
-            if (!keystoreBase64.isNullOrEmpty()) {
-                signingConfig = signingConfigs.getByName("release")
-            }
         }
         debug {
-            applicationIdSuffix = ""
+            applicationIdSuffix = ".debug"
             isDebuggable = true
         }
     }
@@ -220,7 +203,56 @@ dependencies {
 </resources>
 """.trimIndent()
 
-        // 10. Compose Theme files
+        // 10. Default adaptive launcher icons if not custom icon
+        if (!hasCustomIcon) {
+            files["app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml"] = """
+<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_launcher_background" />
+    <foreground android:drawable="@drawable/ic_launcher_foreground" />
+</adaptive-icon>
+""".trimIndent()
+
+            files["app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml"] = """
+<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_launcher_background" />
+    <foreground android:drawable="@drawable/ic_launcher_foreground" />
+</adaptive-icon>
+""".trimIndent()
+
+            files["app/src/main/res/drawable/ic_launcher_background.xml"] = """
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#121212"
+        android:pathData="M0,0h108v108h-108z" />
+</vector>
+""".trimIndent()
+
+            files["app/src/main/res/drawable/ic_launcher_foreground.xml"] = """
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#00FF66"
+        android:pathData="M31,44 L20,54 L31,64 M77,44 L88,54 L77,64 M60,34 L48,74"
+        android:strokeColor="#00FF66"
+        android:strokeWidth="5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+</vector>
+""".trimIndent()
+        }
+
+        // 11. Compose Theme files
         files["app/src/main/java/$packagePath/ui/theme/Color.kt"] = """
 package $packageName.ui.theme
 
@@ -270,7 +302,7 @@ fun AppTheme(
 }
 """.trimIndent()
 
-        // 11. Template-specific MainActivity.kt
+        // 12. Template-specific MainActivity.kt
         when (templateId) {
             "bottom_navigation" -> {
                 files["app/src/main/java/$packagePath/MainActivity.kt"] = generateBottomNavMainActivity(packageName, appName)
@@ -283,10 +315,10 @@ fun AppTheme(
             }
         }
 
-        // 12. GitHub Actions Workflow (.github/workflows/build-apk.yml)
+        // 13. GitHub Actions Workflow (.github/workflows/build-apk.yml)
         files[".github/workflows/build-apk.yml"] = generateProjectWorkflow(appName)
 
-        // 13. README.md
+        // 14. README.md
         files["README.md"] = """
 # $appName
 

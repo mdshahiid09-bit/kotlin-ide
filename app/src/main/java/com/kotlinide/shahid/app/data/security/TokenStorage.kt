@@ -26,13 +26,14 @@ class TokenStorage(private val context: Context) {
     }
 
     fun saveToken(token: String) {
-        val cleanToken = token.trim()
+        val cleanToken = cleanToken(token)
         prefs.edit().putString(KEY_GITHUB_TOKEN, cleanToken).apply()
     }
 
     fun getToken(): String? {
-        val token = prefs.getString(KEY_GITHUB_TOKEN, null)
-        return if (!token.isNullOrBlank()) token else null
+        val raw = prefs.getString(KEY_GITHUB_TOKEN, null) ?: return null
+        val cleanToken = cleanToken(raw)
+        return if (cleanToken.isNotBlank()) cleanToken else null
     }
 
     fun getMaskedToken(): String? {
@@ -59,5 +60,14 @@ class TokenStorage(private val context: Context) {
         private const val PREFS_FILENAME = "secure_user_credentials"
         private const val PREFS_FILENAME_FALLBACK = "user_credentials_prefs"
         private const val KEY_GITHUB_TOKEN = "enc_gh_pat_token"
+
+        fun cleanToken(raw: String): String {
+            return raw
+                .replace("\r", "")
+                .replace("\n", "")
+                .replace(" ", "")
+                .replace("\t", "")
+                .trim()
+        }
     }
 }

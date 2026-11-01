@@ -45,6 +45,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.kotlinide.shahid.app.data.api.GitHubApiException
 import com.kotlinide.shahid.app.data.api.GitHubApiService
 import com.kotlinide.shahid.app.data.security.TokenStorage
 import com.kotlinide.shahid.app.data.storage.AppPreferences
@@ -126,10 +127,11 @@ fun FirstRunGuideScreen(
                 Button(
                     onClick = {
                         if (currentStep == 1) {
-                            if (tokenInput.isNotBlank()) {
+                            val cleanToken = TokenStorage.cleanToken(tokenInput)
+                            if (cleanToken.isNotBlank()) {
                                 isValidating = true
                                 validationError = null
-                                tokenStorage.saveToken(tokenInput)
+                                tokenStorage.saveToken(cleanToken)
                                 coroutineScope.launch {
                                     val result = apiService.validateToken()
                                     isValidating = false
@@ -138,7 +140,11 @@ fun FirstRunGuideScreen(
                                         validationSuccess = "Connected as @${user.login}"
                                         currentStep = 2
                                     }.onFailure { err ->
-                                        validationError = err.message ?: "Authentication failed."
+                                        validationError = if (err is GitHubApiException) {
+                                            err.userFriendlyMessage
+                                        } else {
+                                            err.message ?: "Authentication failed."
+                                        }
                                     }
                                 }
                             } else {
