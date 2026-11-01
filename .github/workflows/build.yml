@@ -56,111 +56,40 @@ jobs:
             echo "Signing secrets are not fully configured. Release signing will be skipped."
           fi
 
-      - name: Decode and Verify Keystore
+      - name: Decode Release Keystore
         if: env.HAS_KEYSTORE == 'true'
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          python3 - << 'EOF'
+          import os, base64, sys
+          raw = os.environ.get("KEYSTORE_BASE64", "")
+          clean = "".join(raw.split()).strip("\"'")
+          if not clean:
+              print("ERROR: KEYSTORE_BASE64 is empty")
+              sys.exit(1)
+          ks_dir = os.path.join(os.environ.get("RUNNER_TEMP", "/tmp"), "keystore")
+          os.makedirs(ks_dir, exist_ok=True)
+          ks_file = os.path.join(ks_dir, "release.jks")
+          data = base64.b64decode(clean)
+          with open(ks_file, "wb") as f:
+              f.write(data)
+          os.chmod(ks_file, 0o600)
+          print(f"Decoded keystore size: {len(data)} bytes")
+          with open(os.environ["GITHUB_ENV"], "a") as f:
+              f.write(f"KEYSTORE_FILE={ks_file}\n")
+          EOF
+
+      - name: Diagnose and Resolve Keystore Credentials
+        if: env.HAS_KEYSTORE == 'true'
+        env:
+          KEYSTORE_FILE: ${{ env.KEYSTORE_FILE }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           set -o pipefail
-          python3 - << 'EOF' 2>&1 | tee keystore_prep.log
-          import os, base64, subprocess, sys
-
-          print("--- Step 1: Base64 Decoding ---")
-          raw = os.environ.get("KEYSTORE_BASE64", "")
-          clean_b64 = "".join(raw.split())
-          print(f"Raw b64 length: {len(raw)}, Clean b64 length: {len(clean_b64)}")
-
-          runner_temp = os.environ.get("RUNNER_TEMP", "/tmp")
-          ks_dir = os.path.join(runner_temp, "keystore")
-          os.makedirs(ks_dir, exist_ok=True)
-          ks_file = os.path.join(ks_dir, "release.jks")
-
-          try:
-              data = base64.b64decode(clean_b64)
-              print(f"Decoded bytes length: {len(data)}")
-              with open(ks_file, "wb") as f:
-                  f.write(data)
-              os.chmod(ks_file, 0o600)
-          except Exception as e:
-              print(f"ERROR in decoding: {e}")
-              sys.exit(1)
-
-          with open(os.environ["GITHUB_ENV"], "a") as f:
-              f.write(f"KEYSTORE_FILE={ks_file}\n")
-
-          print("\n--- Step 2: Inspect Keystore Entries with keytool ---")
-          ks_pass = os.environ.get("KEYSTORE_PASSWORD", "").strip()
-          k_alias = os.environ.get("KEY_ALIAS", "").strip()
-          k_pass = os.environ.get("KEY_PASSWORD", "").strip()
-
-          res = subprocess.run(
-              ["keytool", "-list", "-v", "-keystore", ks_file, "-storepass", ks_pass],
-              capture_output=True, text=True
-          )
-          print(f"keytool list return code: {res.returncode}")
-          if res.stdout:
-              print("=== keytool output summary ===")
-              for line in res.stdout.splitlines():
-                  if any(k in line for k in ["Keystore type:", "Keystore provider:", "Alias name:", "Entry type:", "Creation date:"]):
-                      print(f"  {line.strip()}")
-          if res.stderr:
-              for line in res.stderr.splitlines():
-                  if "Warning" in line:
-                      print(f"  {line.strip()}")
-
-          actual_aliases = []
-          for line in res.stdout.splitlines():
-              if line.strip().startswith("Alias name:"):
-                  alias = line.split("Alias name:")[1].strip()
-                  actual_aliases.append(alias)
-
-          print(f"\nConfigured KEY_ALIAS: '{k_alias}'")
-          print(f"Aliases discovered in keystore: {actual_aliases}")
-
-          matched_alias = k_alias
-          if actual_aliases:
-              if k_alias in actual_aliases:
-                  matched_alias = k_alias
-                  print(f"Exact alias match found: '{matched_alias}'")
-              else:
-                  for a in actual_aliases:
-                      if a.lower() == k_alias.lower():
-                          matched_alias = a
-                          print(f"Case-insensitive alias match found: '{matched_alias}'")
-                          break
-                  else:
-                      matched_alias = actual_aliases[0]
-                      print(f"Using first available alias: '{matched_alias}'")
-
-          with open(os.environ["GITHUB_ENV"], "a") as f:
-              f.write(f"RESOLVED_KEY_ALIAS={matched_alias}\n")
-
-          print("\n--- Step 3: Test Key Password ---")
-          passwords = [("KEY_PASSWORD", k_pass)]
-          if ks_pass != k_pass:
-              passwords.append(("KEYSTORE_PASSWORD", ks_pass))
-
-          working_key_pass = k_pass
-          for name, pw in passwords:
-              t = subprocess.run(
-                  ["keytool", "-certreq", "-keystore", ks_file, "-alias", matched_alias, "-storepass", ks_pass, "-keypass", pw],
-                  capture_output=True, text=True
-              )
-              print(f"Testing {name}: returncode={t.returncode}")
-              if t.returncode == 0:
-                  print(f"SUCCESS: {name} unlocked private key!")
-                  working_key_pass = pw
-                  break
-              else:
-                  err_line = t.stderr.strip().splitlines()[-1] if t.stderr.strip() else "failed"
-                  print(f"Notice for {name}: {err_line}")
-
-          with open(os.environ["GITHUB_ENV"], "a") as f:
-              f.write(f"RESOLVED_KEY_PASSWORD={working_key_pass}\n")
-          EOF
+          java .github/scripts/KeystoreDoctor.java 2>&1 | tee keystore_doctor.log
 
       - name: Build Debug APK
         id: build_debug
@@ -173,7 +102,7 @@ jobs:
         if: env.HAS_KEYSTORE == 'true'
         env:
           KEYSTORE_FILE: ${{ env.KEYSTORE_FILE }}
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEYSTORE_PASSWORD: ${{ env.RESOLVED_KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ env.RESOLVED_KEY_ALIAS }}
           KEY_PASSWORD: ${{ env.RESOLVED_KEY_PASSWORD }}
         run: |
@@ -204,7 +133,7 @@ jobs:
         run: |
           LOG_FILE="failure_log.txt"
           echo "=== Build Failure Diagnostic ===" > "$LOG_FILE"
-          for f in keystore_prep.log build_release_log.txt build_debug_log.txt; do
+          for f in keystore_doctor.log build_release_log.txt build_debug_log.txt; do
             if [ -f "$f" ]; then
               echo "--- Log: $f ---" >> "$LOG_FILE"
               tail -n 60 "$f" >> "$LOG_FILE"

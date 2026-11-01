@@ -23,7 +23,7 @@ android {
     }
 
     val ksFile = System.getenv("KEYSTORE_FILE")?.trim()
-    val ksPass = System.getenv("KEYSTORE_PASSWORD")?.trim()
+    val ksPass = (System.getenv("RESOLVED_KEYSTORE_PASSWORD") ?: System.getenv("KEYSTORE_PASSWORD"))?.trim()
     val kAlias = (System.getenv("RESOLVED_KEY_ALIAS") ?: System.getenv("KEY_ALIAS"))?.trim()
     val kPass = (System.getenv("RESOLVED_KEY_PASSWORD") ?: System.getenv("KEY_PASSWORD") ?: ksPass)?.trim()
 
